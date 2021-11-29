@@ -1,0 +1,18 @@
+[package]
+name = "syn-helpers"
+description = "Framework for building derive macros"
+license = "MIT"
+repository = "https://github.com/kaleidawave/syn-helpers"
+authors = [ "Ben <kaleidawave@gmail.com>" ]
+categories = [ "development-tools" ]
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0.10"
+syn = { version = "1.0.81", features = ["full", "extra-traits"] }
+either_n = "0.2.0"
+Inflector = "0.11.4"

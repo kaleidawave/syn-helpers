@@ -1,0 +1,30 @@
+name: Release main crate on crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "major/minor/patch or semver"
+        required: false
+        default: "patch"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set git credentials
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+      - name: kaleidawave/crates-release-gh-action@v1
+        with:
+          version: ${{ github.event.inputs.version }}
+          crates-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          working-directory: .
+      - name: Push updated Cargo.toml
+        run: |
+          git tag "v${{ steps.release.outputs.new-version }}"
+          git add .
+          git commit -m "Release: ${{ steps.release.outputs.new-version }}"
+          git push --tags origin main

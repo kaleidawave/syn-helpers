@@ -5,7 +5,7 @@ license = "MIT"
 repository = "https://github.com/kaleidawave/syn-helpers"
 authors = [ "Ben <kaleidawave@gmail.com>" ]
 categories = [ "development-tools::procedural-macro-helpers", "development-tools::build-utils" ]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

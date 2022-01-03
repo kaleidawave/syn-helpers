@@ -2,14 +2,17 @@ mod fields_and_structures;
 mod lists_and_arguments;
 mod visit_fields;
 
+use proc_macro2::{Ident, TokenStream};
+use quote::quote;
+use syn::{ConstParam, FnArg, GenericParam, LifetimeDef, Path, Stmt, Type, TypeParam};
+
 pub use fields_and_structures::*;
+pub use inflector::cases::snakecase::to_snake_case as str_to_snake_case;
 pub use lists_and_arguments::*;
-use proc_macro2::Ident;
-use syn::{FnArg, GenericParam, Path, Stmt, Type};
 pub use visit_fields::*;
 
-pub use inflector::cases::snakecase::to_snake_case as str_to_snake_case;
-
+/// Whether the method takes two instances of self
+/// Used for comparisons (e.g. PartialEq)
 pub enum BuildPair {
     Pair {
         statements_if_enums_do_not_match: Vec<Stmt>,
@@ -53,12 +56,38 @@ pub struct PrefixAndPostfix<T> {
     pub postfix: Vec<T>,
 }
 
-// `#[derive(Default)]` would require
+// `#[derive(Default)]` generates bounds on T :(
 impl<T> Default for PrefixAndPostfix<T> {
     fn default() -> Self {
         Self {
             prefix: Default::default(),
             postfix: Default::default(),
         }
+    }
+}
+
+/// Returns true if same variant and same name, ignores bounds
+pub(crate) fn generic_parameters_have_same_name(
+    generic_parameter1: &GenericParam,
+    generic_parameter2: &GenericParam,
+) -> bool {
+    match (generic_parameter1, generic_parameter2) {
+        (GenericParam::Type(gtp1), GenericParam::Type(gtp2)) => gtp1.ident == gtp2.ident,
+        (GenericParam::Lifetime(glp1), GenericParam::Lifetime(glp2)) => {
+            glp1.lifetime.ident == glp2.lifetime.ident
+        }
+        (GenericParam::Const(gcp1), GenericParam::Const(gcp2)) => gcp1.ident == gcp2.ident,
+        _ => false,
+    }
+}
+
+/// Removes the bounds and uses the parameter as a reference
+pub(crate) fn generic_param_to_generic_argument_token_stream(
+    trait_generic_parameter: &GenericParam,
+) -> TokenStream {
+    match trait_generic_parameter {
+        GenericParam::Const(ConstParam { ident, .. })
+        | GenericParam::Type(TypeParam { ident, .. }) => quote! { #ident },
+        GenericParam::Lifetime(LifetimeDef { lifetime, .. }) => quote! { #lifetime },
     }
 }

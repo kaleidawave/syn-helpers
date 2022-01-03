@@ -1,12 +1,12 @@
-use std::error;
-
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
+use std::error;
 use syn::{parse_quote, Arm, Data, DeriveInput, GenericParam, LitStr, Stmt};
 
 use crate::{
-    fields_to_structure_fields, BuildPair, Field, Fields, NamedField, PrefixAndPostfix, Structure,
-    Trait, TraitMethod, UnnamedField,
+    fields_to_structure_fields, generic_param_to_generic_argument_token_stream,
+    generic_parameters_have_same_name, BuildPair, Field, Fields, NamedField, PrefixAndPostfix,
+    Structure, Trait, TraitMethod, UnnamedField,
 };
 
 /// Generates implementation for a trait over a structure
@@ -23,7 +23,9 @@ pub fn build_implementation_over_structure<'a>(
     ) -> Result<Vec<Stmt>, Box<dyn error::Error>>,
 ) -> TokenStream {
     let structure_name = &structure.ident;
-    let structure_generics = &structure.generics;
+
+    // Cloning bc going to modify them in this scope for clashing reasons
+    let mut structure_generics = structure.generics.clone();
 
     let Trait {
         name: trait_name,
@@ -31,45 +33,70 @@ pub fn build_implementation_over_structure<'a>(
         methods,
     } = implementing_trait;
 
-    let trait_generics = if !trait_generic_parameters.is_empty() {
-        Some(quote!(<#(#trait_generic_parameters),*>))
+    let mut conflict_resolution_corrections_index = 0;
+
+    let generics_on_structure = if !structure_generics.params.is_empty() {
+        // This modifies `structure_generics`s generics in-place, not great but as owned under this function it should be okay
+        let mut structure_identifiers = Vec::<TokenStream>::new();
+        for structure_generic_parameter in structure_generics.params.iter_mut() {
+            if trait_generic_parameters
+                .iter()
+                .any(|trait_generic_parameter| {
+                    generic_parameters_have_same_name(
+                        trait_generic_parameter,
+                        structure_generic_parameter,
+                    )
+                })
+            {
+                let ident = Ident::new(
+                    &format!("Gp{}", conflict_resolution_corrections_index),
+                    Span::call_site(),
+                );
+                conflict_resolution_corrections_index += 1;
+                match structure_generic_parameter {
+                    GenericParam::Type(gtp) => gtp.ident = ident.clone(),
+                    GenericParam::Lifetime(glp) => glp.lifetime.ident = ident.clone(),
+                    GenericParam::Const(gcp) => gcp.ident = ident.clone(),
+                }
+            }
+            structure_identifiers.push(generic_param_to_generic_argument_token_stream(
+                structure_generic_parameter,
+            ));
+        }
+        Some(quote!(<#(#structure_identifiers),*>))
     } else {
         None
     };
 
-    let implementation_generics =
-        if !trait_generic_parameters.is_empty() || !structure_generics.params.is_empty() {
-            let parameters_chained = trait_generic_parameters
+    let generics_on_trait = if !trait_generic_parameters.is_empty() {
+        // Removes bounds
+        let trait_generic_arguments =
+            trait_generic_parameters
                 .iter()
-                .chain(structure_generics.params.iter());
-            Some(quote!(<#(#parameters_chained),*>))
+                .map(|trait_generic_parameter| {
+                    generic_param_to_generic_argument_token_stream(trait_generic_parameter)
+                });
+        Some(quote!(<#(#trait_generic_arguments),*>))
+    } else {
+        None
+    };
+
+    // Combination of structure and trait generics, retains bounds
+    let generics_on_impl =
+        if !trait_generic_parameters.is_empty() || !structure_generics.params.is_empty() {
+            let mut references = trait_generic_parameters
+                .iter()
+                .chain(structure_generics.params.iter())
+                .collect::<Vec<_>>();
+            references.sort_unstable_by_key(|generic| match generic {
+                GenericParam::Lifetime(_) => 0,
+                GenericParam::Type(_) => 1,
+                GenericParam::Const(_) => 2,
+            });
+            Some(quote!(<#(#references),*>))
         } else {
             None
         };
-
-    let structure_generics = if !structure_generics.params.is_empty() {
-        // Remove constraints for the arguments of the type on the rhs of the impl
-        let references = structure_generics
-            .params
-            .iter()
-            .map(|parameter| match parameter {
-                GenericParam::Type(ty) => {
-                    let ident = &ty.ident;
-                    quote!(#ident)
-                }
-                GenericParam::Lifetime(lt) => {
-                    let lt = &lt.lifetime;
-                    quote!(#lt)
-                }
-                GenericParam::Const(cg) => {
-                    let ident = &cg.ident;
-                    quote!(#ident)
-                }
-            });
-        Some(quote!(<#(#references),*>))
-    } else {
-        None
-    };
 
     match &structure.data {
         Data::Struct(r#struct) => {
@@ -89,11 +116,8 @@ pub fn build_implementation_over_structure<'a>(
                     let PrefixAndPostfix { prefix, postfix } = match structure_result {
                         Ok(structure) => structure,
                         Err(err) => {
-                            let error_as_string = LitStr::new(
-                                &err.to_string(),
-                                Span::call_site(),
-                            );
-                            return quote!( compile_error!(#error_as_string) )
+                            let error_as_string = LitStr::new(&err.to_string(), Span::call_site());
+                            return quote!( compile_error!(#error_as_string); )
                         },
                     };
 
@@ -113,7 +137,7 @@ pub fn build_implementation_over_structure<'a>(
                                 &err.to_string(),
                                 Span::call_site(),
                             );
-                            return quote!( compile_error!(#error_as_string) )
+                            return quote!( compile_error!(#error_as_string); )
                         },
                     };
 
@@ -167,7 +191,7 @@ pub fn build_implementation_over_structure<'a>(
                 })
                 .collect::<TokenStream>();
             quote! {
-                impl #implementation_generics #trait_name #trait_generics for #structure_name #structure_generics {
+                impl #generics_on_impl #trait_name #generics_on_trait for #structure_name #generics_on_structure {
                     #methods
                 }
             }
@@ -190,7 +214,7 @@ pub fn build_implementation_over_structure<'a>(
                         Ok(structure) => structure,
                         Err(err) => {
                             let error_as_string = LitStr::new(&err.to_string(), Span::call_site());
-                            return quote!(compile_error!(#error_as_string));
+                            return quote!( compile_error!(#error_as_string); );
                         }
                     };
 
@@ -213,7 +237,7 @@ pub fn build_implementation_over_structure<'a>(
                             Err(err) => {
                                 let error_as_string =
                                     LitStr::new(&err.to_string(), Span::call_site());
-                                return quote!(compile_error!(#error_as_string));
+                                return quote!( compile_error!(#error_as_string); );
                             }
                         };
 
@@ -312,11 +336,13 @@ pub fn build_implementation_over_structure<'a>(
                 })
                 .collect::<TokenStream>();
             quote! {
-                impl #implementation_generics #trait_name #trait_generics for #structure_name #structure_generics {
+                impl #generics_on_impl #trait_name #generics_on_trait for #structure_name #generics_on_structure {
                     #methods
                 }
             }
         }
-        Data::Union(_) => todo!(),
+        Data::Union(_) => {
+            quote!( compile_error!("syn-helpers does not support derives on unions"); )
+        }
     }
 }

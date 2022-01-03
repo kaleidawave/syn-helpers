@@ -121,7 +121,7 @@ fn derives_fields_on_enum() {
 #[test]
 fn derives_fields_on_input_with_generics() {
     let enum1: DeriveInput = parse_quote! {
-        struct MyReference<'a, T>(&'a T);
+        struct MyReferenceType<'a, T>(&'a T);
     };
 
     let trait1 = Trait {
@@ -140,7 +140,44 @@ fn derives_fields_on_input_with_generics() {
     assert_eq!(
         stream.to_string(),
         quote! {
-            impl<'a, T> MyTrait1 for MyReference<'a, T> { }
+            impl<'a, T> MyTrait1 for MyReferenceType<'a, T> { }
+        }
+        .to_string()
+    )
+}
+
+#[test]
+fn derives_fields_on_trait_with_generic_collision() {
+    let enum1: DeriveInput = parse_quote! {
+        struct MyReferenceType<'a, T>(&'a T);
+    };
+
+    let trait1 = Trait {
+        name: parse_quote!(MyTrait1),
+        methods: vec![TraitMethod {
+            method_name: Ident::new("method_one", Span::call_site()),
+            method_parameters: vec![parse_quote!(item: T)],
+            build_pair: Default::default(),
+            method_generics: vec![],
+            return_type: None,
+        }],
+        generic_parameters: vec![parse_quote!(T)],
+    };
+
+    let stream = build_implementation_over_structure(
+        &enum1,
+        trait1,
+        |_, _| Ok(Default::default()),
+        |_, _| Ok(Default::default()),
+    );
+
+    // T is used on trait and structure so derive uses Gp0 in place of the T on `MyReferenceType`
+    assert_eq!(
+        stream.to_string(),
+        quote! {
+            impl<'a, T, Gp0> MyTrait1<T> for MyReferenceType<'a, Gp0> {
+                fn method_one(item: T) { let Self (_) = self ; }
+            }
         }
         .to_string()
     )

@@ -24,7 +24,7 @@ impl<T> IntoIterator for CommaSeparatedList<T> {
     }
 }
 
-/// e.g. `name=AST`
+/// A argument with a name and a value. '=' separated, e.g. `name=AST`
 #[derive(Debug)]
 pub struct Argument<T>(pub String, pub T);
 

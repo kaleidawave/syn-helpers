@@ -23,7 +23,6 @@ jobs:
         with:
           version: ${{ github.event.inputs.version }}
           crates-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          working-directory: .
       - name: Push updated Cargo.toml
         run: |
           git tag "v${{ steps.release.outputs.new-version }}"

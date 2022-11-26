@@ -1,6 +1,7 @@
 # Syn Helpers
 
-![https://crates.io/crates/syn-helpers](https://img.shields.io/crates/v/syn-helpers)
+[![](https://img.shields.io/crates/v/syn-helpers)](https://crates.io/crates/syn-helpers)
+
 
 [Documentation](https://docs.rs/syn-helpers/latest/syn_helpers/)
 

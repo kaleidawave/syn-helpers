@@ -7,7 +7,6 @@ use quote::quote;
 use syn::{ConstParam, FnArg, GenericParam, LifetimeDef, Path, Stmt, Type, TypeParam};
 
 pub use fields_and_structures::*;
-pub use inflector::cases::snakecase::to_snake_case as str_to_snake_case;
 pub use lists_and_arguments::*;
 pub use visit_fields::*;
 

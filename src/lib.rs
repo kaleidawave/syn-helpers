@@ -1,29 +1,27 @@
-mod fields_and_structures;
+mod fields;
 mod lists_and_arguments;
+mod structure;
 mod visit_fields;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::{ConstParam, FnArg, GenericParam, LifetimeDef, Path, Stmt, Type, TypeParam};
 
-pub use fields_and_structures::*;
+pub use fields::*;
 pub use lists_and_arguments::*;
+pub use structure::*;
 pub use visit_fields::*;
 
 /// Whether the method takes two instances of self
 /// Used for comparisons (e.g. PartialEq)
+#[derive(Default)]
 pub enum BuildPair {
     Pair {
         statements_if_enums_do_not_match: Vec<Stmt>,
         other_item_name: Ident,
     },
+    #[default]
     NoPairing,
-}
-
-impl Default for BuildPair {
-    fn default() -> Self {
-        BuildPair::NoPairing
-    }
 }
 
 impl BuildPair {
@@ -42,8 +40,8 @@ pub struct Trait {
 /// A method under a trait
 pub struct TraitMethod {
     pub method_name: Ident,
-    pub method_parameters: Vec<FnArg>,
     pub method_generics: Vec<GenericParam>,
+    pub method_parameters: Vec<FnArg>,
     pub return_type: Option<Type>,
     /// Whether this method is in takes two of self, for use in comparison
     pub build_pair: BuildPair,

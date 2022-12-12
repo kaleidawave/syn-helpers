@@ -55,8 +55,7 @@ fn derives_fields_on_struct() {
     token_stream_eq!(
         stream,
         quote! {
-            impl MyTrait for X
-            where String : MyTrait , i32 : MyTrait {
+            impl MyTrait for X {
                 fn method_one(&self) {
                     let Self { a: _0, b: _1 } = self;
                     do_thing(&_0);
@@ -110,8 +109,7 @@ fn derives_fields_on_enum() {
     token_stream_eq!(
         stream,
         quote! {
-            impl MyTrait for X
-            where i32: MyTrait, bool: MyTrait, std::collections::HashSet<u8>: MyTrait {
+            impl MyTrait for X {
                 fn method_one(&mut self, a: i32) {
                     match self {
                         Self::A(_0, _1) => {
@@ -237,8 +235,7 @@ fn derive_add_where_clause() {
     token_stream_eq!(
         stream,
         quote! {
-        impl<T> MyTrait for MyStruct<T>
-        where T: MyTrait, A: MyTrait {
+        impl<T> MyTrait for MyStruct<T> where T: MyTrait {
             fn method_one() {
                 let Self { item: _0, a: _1, b: _ } = self;
             }

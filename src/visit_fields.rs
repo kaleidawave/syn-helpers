@@ -1,7 +1,10 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
 use std::{collections::HashMap, error};
-use syn::{parse_quote, visit_mut::VisitMut, Arm, Data, DeriveInput, GenericParam, LitStr, Stmt};
+use syn::{
+    parse_quote, visit::Visit, visit_mut::VisitMut, Arm, Data, DeriveInput, GenericParam, Generics,
+    LitStr, Stmt,
+};
 
 use crate::{
     fields_to_structure_fields, generic_param_to_generic_argument_token_stream,
@@ -24,7 +27,7 @@ pub fn build_implementation_over_structure<'a>(
     let structure_name = &structure.ident;
 
     // Cloning as modify clashes
-    let mut structure_generics = structure.generics.clone();
+    let mut modified_structure_generics = structure.generics.clone();
 
     let Trait {
         name: trait_name,
@@ -36,8 +39,8 @@ pub fn build_implementation_over_structure<'a>(
 
     let trait_with_arguments: TokenStream = if !trait_generic_parameters.is_empty() {
         // Rename clashing trait names
-        if structure_generics.lt_token.is_some() {
-            for structure_generic_parameter in structure_generics.params.iter_mut() {
+        if modified_structure_generics.lt_token.is_some() {
+            for structure_generic_parameter in modified_structure_generics.params.iter_mut() {
                 let collision = trait_generic_parameters
                     .iter()
                     .any(|trait_generic_parameter| {
@@ -57,6 +60,7 @@ pub fn build_implementation_over_structure<'a>(
                         GenericParam::Lifetime(glp) => &mut glp.lifetime.ident,
                         GenericParam::Const(gcp) => &mut gcp.ident,
                     };
+
                     conflicts_map.insert(ident.clone(), new_ident.clone());
                     *ident = new_ident;
                 }
@@ -78,10 +82,10 @@ pub fn build_implementation_over_structure<'a>(
 
     // Combination of structure and trait generics, retains bounds
     let generics_for_impl =
-        if !trait_generic_parameters.is_empty() || !structure_generics.params.is_empty() {
+        if !trait_generic_parameters.is_empty() || !modified_structure_generics.params.is_empty() {
             let mut references = trait_generic_parameters
                 .iter()
-                .chain(structure_generics.params.iter())
+                .chain(modified_structure_generics.params.iter())
                 .collect::<Vec<_>>();
 
             // This is the order in which the AST is defined
@@ -142,7 +146,16 @@ pub fn build_implementation_over_structure<'a>(
                         },
                     };
 
-                    where_clauses.extend(fields.fields_iterator().flat_map(|field| field.get_type_that_needs_constraint()));
+                    {
+                        where_clauses.extend(fields
+                            .fields_iterator()
+                            .flat_map(|field| field.get_type_that_needs_constraint())
+                            .map(|mut ty| {
+                                RenameGenerics(&conflicts_map).visit_type_mut(&mut ty);
+                                ty
+                            })
+                            .filter(|ty| ReferencesAGeneric::has_generic(ty, &modified_structure_generics)));
+                    }
 
                     let self_path = parse_quote!(Self);
                     let matcher = fields.to_pattern(&self_path, crate::Variant::Primary);
@@ -178,18 +191,13 @@ pub fn build_implementation_over_structure<'a>(
                 .collect::<TokenStream>();
 
             let where_clause: Option<_> = if !where_clauses.is_empty() {
-                if !conflicts_map.is_empty() {
-                    for element in where_clauses.iter_mut() {
-                        RenameGenerics(&conflicts_map).visit_type_mut(element)
-                    }
-                }
                 Some(quote!(where #( #where_clauses: #trait_with_arguments ),* ))
             } else {
                 None
             };
 
             quote! {
-                impl #generics_for_impl #trait_with_arguments for #structure_name #structure_generics #where_clause {
+                impl #generics_for_impl #trait_with_arguments for #structure_name #modified_structure_generics #where_clause {
                     #methods
                 }
             }
@@ -240,7 +248,16 @@ pub fn build_implementation_over_structure<'a>(
                             }
                         };
 
-                        where_clauses.extend(fields.fields_iterator().flat_map(|field| field.get_type_that_needs_constraint()));
+                        {
+                            where_clauses.extend(fields
+                                .fields_iterator()
+                                .flat_map(|field| field.get_type_that_needs_constraint())
+                                .map(|mut ty| {
+                                    RenameGenerics(&conflicts_map).visit_type_mut(&mut ty);
+                                    ty
+                                })
+                                .filter(|ty| ReferencesAGeneric::has_generic(ty, &modified_structure_generics)));
+                        }
 
                         let variant_pattern = parse_quote!(Self::#variant_ident);
                         let matcher = fields.to_pattern(&variant_pattern, crate::Variant::Primary);
@@ -248,7 +265,7 @@ pub fn build_implementation_over_structure<'a>(
                         if build_pair.is_pair() {
                             let alternative_matcher = fields.to_pattern(&variant_pattern, crate::Variant::Secondary);
 
-                            quote! ( (#matcher, #alternative_matcher) => { #(#body)* } )                           
+                            quote! ( (#matcher, #alternative_matcher) => { #(#body)* } )
                         } else {
                             quote! { #matcher => { #(#body)* } }
                         }
@@ -301,7 +318,7 @@ pub fn build_implementation_over_structure<'a>(
             };
 
             quote! {
-                impl#generics_for_impl #trait_with_arguments for #structure_name #structure_generics #where_clause {
+                impl#generics_for_impl #trait_with_arguments for #structure_name #modified_structure_generics #where_clause {
                     #methods
                 }
             }
@@ -329,6 +346,50 @@ impl<'a> VisitMut for RenameGenerics<'a> {
             if let Some(rewrite) = self.0.get(current_ident).cloned() {
                 i.path = rewrite.into();
             }
+        }
+    }
+}
+
+struct ReferencesAGeneric<'a> {
+    found: bool,
+    generics_on_structures: &'a Generics,
+}
+
+impl<'a> ReferencesAGeneric<'a> {
+    fn has_generic(ty: &syn::Type, generics_on_structures: &'a Generics) -> bool {
+        let mut state = ReferencesAGeneric {
+            found: false,
+            generics_on_structures,
+        };
+        state.visit_type(ty);
+        state.found
+    }
+}
+
+impl<'a, 'b> Visit<'b> for ReferencesAGeneric<'a> {
+    fn visit_type_reference(&mut self, i: &'b syn::TypeReference) {
+        if !self.found {
+            self.visit_type(&i.elem);
+        }
+    }
+
+    fn visit_type_path(&mut self, i: &'b syn::TypePath) {
+        if self.found {
+            return;
+        }
+        if let Some(path) = i.path.get_ident() {
+            self.found = self
+                .generics_on_structures
+                .params
+                .iter()
+                .filter_map(|param| {
+                    if let GenericParam::Type(ty) = param {
+                        Some(ty)
+                    } else {
+                        None
+                    }
+                })
+                .any(|ty| &ty.ident == path);
         }
     }
 }

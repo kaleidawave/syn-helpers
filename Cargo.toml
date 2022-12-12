@@ -13,5 +13,5 @@ edition = "2018"
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0.10"
-syn = { version = "1.0.81", features = ["full", "visit-mut"] }
+syn = { version = "1.0.81", features = ["full", "visit", "visit-mut"] }
 either_n = "0.2.0"

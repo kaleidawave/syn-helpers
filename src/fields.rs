@@ -1,285 +1,432 @@
+use std::error::Error;
 use std::iter;
 
 use either_n::Either3;
+use proc_macro2::Span;
 use proc_macro2::{Ident, TokenStream};
+use quote::format_ident;
 use quote::quote;
-use quote::{format_ident, ToTokens};
-use syn::{Attribute, Expr, Type};
+use quote::ToTokens;
+use syn::ExprUnary;
+use syn::Token;
+use syn::{parse_quote, Attribute, Expr, Path, Type};
 
-use crate::structure::Structure;
+use crate::{HasAttributes, TypeOfSelf};
 
 /// Represents the fields in a structure. This could be the fields on a struct
 /// or the fields in the variant of a enum
-pub enum Fields<'a> {
-    /// `**name { X: String }`
-    Named {
-        on_structure: Structure<'a>,
-        fields: Vec<NamedField<'a>>,
-    },
-    /// `**name(String)`
-    Unnamed {
-        on_structure: Structure<'a>,
-        fields: Vec<UnnamedField<'a>>,
-    },
+pub enum Fields {
+    /// `*name* { X: String }`
+    Named(Vec<NamedField>, Vec<Attribute>),
+    /// `*name*(String)`
+    Unnamed(Vec<UnnamedField>, Vec<Attribute>),
     /// No fields `*name*`
-    Unit { on_structure: Structure<'a> },
+    Unit(Vec<Attribute>),
 }
 
-impl<'a> Fields<'a> {
-    pub fn get_structure(&'a self) -> &Structure<'a> {
+impl Fields {
+    pub fn get_field_attributes(&self) -> &[Attribute] {
         match self {
-            Fields::Named { on_structure, .. }
-            | Fields::Unnamed { on_structure, .. }
-            | Fields::Unit { on_structure, .. } => on_structure,
+            Fields::Named(_, attributes)
+            | Fields::Unnamed(_, attributes)
+            | Fields::Unit(attributes) => attributes,
         }
     }
 
-    pub fn get_field_attributes(&'a self) -> impl Iterator<Item = &'a Attribute> {
-        self.get_structure().field_attributes()
-    }
-
-    pub fn fields_iterator<'b>(
-        &'b mut self,
-    ) -> impl Iterator<Item = NamedOrUnnamedField<'b, 'a>> + ExactSizeIterator {
+    pub fn fields_iterator(
+        &self,
+    ) -> impl Iterator<Item = NamedOrUnnamedField<'_>> + ExactSizeIterator {
         match self {
-            Fields::Named { fields, .. } => {
-                Either3::One(fields.iter_mut().map(NamedOrUnnamedField::Named))
+            Fields::Named(fields, ..) => {
+                Either3::One(fields.iter().map(NamedOrUnnamedField::Named))
             }
-            Fields::Unnamed { fields, .. } => {
-                Either3::Two(fields.iter_mut().map(NamedOrUnnamedField::Unnamed))
+            Fields::Unnamed(fields, ..) => {
+                Either3::Two(fields.iter().map(NamedOrUnnamedField::Unnamed))
             }
-            Fields::Unit { .. } => Either3::Three(iter::empty()),
+            Fields::Unit(..) => Either3::Three(iter::empty()),
         }
     }
 
-    pub fn to_pattern(&self, path: &syn::Path, variant: crate::Variant) -> TokenStream {
+    pub fn fields_iterator_mut(
+        &mut self,
+    ) -> impl Iterator<Item = NamedOrUnnamedFieldMut<'_>> + ExactSizeIterator {
         match self {
-            Fields::Named {
-                on_structure: _,
-                fields,
-            } => {
-                let fields_pattern = fields.iter().map(|field| field.get_pattern(variant));
+            Fields::Named(fields, ..) => {
+                Either3::One(fields.iter_mut().map(NamedOrUnnamedFieldMut::Named))
+            }
+            Fields::Unnamed(fields, ..) => {
+                Either3::Two(fields.iter_mut().map(NamedOrUnnamedFieldMut::Unnamed))
+            }
+            Fields::Unit(..) => Either3::Three(iter::empty()),
+        }
+    }
 
+    pub fn to_pattern(&self, path: Path, type_of_self: TypeOfSelf) -> TokenStream {
+        Self::to_pattern_with_config(self, path, type_of_self, "")
+    }
+
+    pub fn to_pattern_with_config(
+        &self,
+        path: Path,
+        type_of_self: TypeOfSelf,
+        name_postfix: &'static str,
+    ) -> TokenStream {
+        match self {
+            Fields::Named(fields, ..) => {
+                let fields_pattern = fields
+                    .iter()
+                    .map(|field| field.get_pattern_with_config(type_of_self, name_postfix));
                 quote!(#path { #(#fields_pattern),* })
             }
-            Fields::Unnamed {
-                on_structure: _,
-                fields,
-            } => {
-                let fields_pattern = fields.iter().map(|field| field.get_pattern(variant));
-
+            Fields::Unnamed(fields, ..) => {
+                let fields_pattern = fields
+                    .iter()
+                    .map(|field| field.get_pattern_with_config(type_of_self, name_postfix));
                 quote!(#path(#(#fields_pattern),*))
             }
-            Fields::Unit { .. } => quote!(#path),
+            Fields::Unit(..) => quote!(#path),
+        }
+    }
+
+    pub fn to_constructor<'b>(
+        &'b self,
+        generator: impl Fn(NamedOrUnnamedField<'b>) -> Result<Expr, Box<dyn Error>>,
+        constructor: Path,
+    ) -> Result<Expr, Box<dyn Error>> {
+        match self {
+            Fields::Named(fields, ..) => {
+                let arguments = fields
+                    .iter()
+                    .map(|field| {
+                        generator(NamedOrUnnamedField::Named(field)).map(|value| {
+                            let field_name = field.name.clone();
+                            quote! { #field_name: #value }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(parse_quote! { #constructor { #(#arguments),* } })
+            }
+            Fields::Unnamed(fields, ..) => {
+                let arguments = fields
+                    .iter()
+                    .map(|field| generator(NamedOrUnnamedField::Unnamed(field)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(parse_quote! { #constructor (#(#arguments),*) })
+            }
+            Fields::Unit(..) => Ok(parse_quote! { #constructor }),
         }
     }
 }
 
 /// Converts to syn::Fields to syn_helpers::Fields
-pub(crate) fn fields_to_structure_fields<'a>(
-    fields: &'a syn::Fields,
-    structure: Structure<'a>,
-) -> Fields<'a> {
+pub(crate) fn syn_fields_to_fields(fields: syn::Fields, attributes: Vec<syn::Attribute>) -> Fields {
     match fields {
         syn::Fields::Named(named_fields) => {
             let named_fields = named_fields
                 .named
-                .iter()
+                .into_iter()
                 .enumerate()
                 .map(|(idx, field)| NamedField {
-                    attrs: &field.attrs,
-                    name: field.ident.as_ref().unwrap(),
-                    ty: &field.ty,
+                    attrs: field.attrs,
+                    name: field.ident.unwrap(),
+                    ty: field.ty,
                     is_used: false,
                     used_for_trait: false,
                     idx,
                 })
                 .collect::<Vec<_>>();
 
-            Fields::Named {
-                fields: named_fields,
-                on_structure: structure,
-            }
+            Fields::Named(named_fields, attributes)
         }
         syn::Fields::Unnamed(unnamed_fields) => {
             let fields = unnamed_fields
                 .unnamed
-                .iter()
+                .into_iter()
                 .enumerate()
                 .map(|(idx, field)| UnnamedField {
                     idx,
-                    attrs: &field.attrs,
-                    ty: &field.ty,
+                    attrs: field.attrs,
+                    ty: field.ty,
                     is_used: false,
                     used_for_trait: false,
                 })
                 .collect::<Vec<_>>();
 
-            Fields::Unnamed {
-                fields,
-                on_structure: structure,
-            }
+            Fields::Unnamed(fields, attributes)
         }
-        syn::Fields::Unit => Fields::Unit {
-            on_structure: structure,
-        },
+        syn::Fields::Unit => Fields::Unit(attributes),
     }
 }
 
 /// A *Field* is declaration of some data under a object
-pub trait Field {
+pub trait Field: HasAttributes {
+    fn get_type(&self) -> &Type;
+
+    /// Get a pattern for reading this field
+    fn get_pattern(&self, type_of_self: TypeOfSelf) -> TokenStream {
+        Self::get_pattern_with_config(self, type_of_self, "")
+    }
+
+    fn get_pattern_with_config(
+        &self,
+        type_of_self: TypeOfSelf,
+        name_postfix: &'static str,
+    ) -> TokenStream;
+
+    fn get_type_that_needs_constraint(&self) -> Option<Type>;
+}
+
+pub trait FieldMut: Field {
     /// Get a expression which refers to this field. Note that reference takes the form `_` + index of field, this is
     /// to prevent possible clashes with parameter names.
     /// Use [Field::get_reference_with_config] to for different options
     fn get_reference(&mut self) -> Expr {
-        Self::get_reference_with_config(self, Variant::Primary, true)
+        Self::get_reference_with_config(self, true, "")
     }
 
-    /// For pairs
-    fn get_reference_pair(&mut self) -> (Expr, Expr) {
-        (
-            Self::get_reference_with_config(self, Variant::Primary, true),
-            Self::get_reference_with_config(self, Variant::Secondary, true),
-        )
-    }
-
-    fn get_reference_with_config(&mut self, variant: Variant, used_for_trait: bool) -> Expr;
-
-    /// Get a pattern for reading this field
-    fn get_pattern(&self, variant: Variant) -> TokenStream;
-
-    fn get_type_that_needs_constraint(&self) -> Option<Type>;
-
-    fn get_attributes(&self) -> &[Attribute];
+    fn get_reference_with_config(
+        &mut self,
+        used_for_trait: bool,
+        name_postfix: &'static str,
+    ) -> Expr;
 }
 
-pub enum NamedOrUnnamedField<'a, 'b> {
-    Named(&'a mut NamedField<'b>),
-    Unnamed(&'a mut UnnamedField<'b>),
+pub enum NamedOrUnnamedField<'a> {
+    Named(&'a NamedField),
+    Unnamed(&'a UnnamedField),
 }
 
-impl Field for NamedOrUnnamedField<'_, '_> {
-    fn get_reference_with_config(&mut self, variant: Variant, used_for_trait: bool) -> Expr {
-        match self {
-            NamedOrUnnamedField::Named(named) => {
-                named.get_reference_with_config(variant, used_for_trait)
-            }
-            NamedOrUnnamedField::Unnamed(unnamed) => {
-                unnamed.get_reference_with_config(variant, used_for_trait)
-            }
-        }
-    }
+pub enum NamedOrUnnamedFieldMut<'a> {
+    Named(&'a mut NamedField),
+    Unnamed(&'a mut UnnamedField),
+}
 
-    fn get_pattern(&self, variant: Variant) -> TokenStream {
-        match self {
-            NamedOrUnnamedField::Named(named) => named.get_pattern(variant),
-            NamedOrUnnamedField::Unnamed(unnamed) => unnamed.get_pattern(variant),
-        }
-    }
-
+impl HasAttributes for NamedOrUnnamedField<'_> {
     fn get_attributes(&self) -> &[Attribute] {
         match self {
             NamedOrUnnamedField::Named(named) => named.get_attributes(),
             NamedOrUnnamedField::Unnamed(unnamed) => unnamed.get_attributes(),
         }
     }
+}
 
+impl Field for NamedOrUnnamedField<'_> {
     fn get_type_that_needs_constraint(&self) -> Option<Type> {
         match self {
             NamedOrUnnamedField::Named(named) => named.get_type_that_needs_constraint(),
             NamedOrUnnamedField::Unnamed(unnamed) => unnamed.get_type_that_needs_constraint(),
         }
     }
+
+    fn get_pattern_with_config(
+        &self,
+        type_of_self: TypeOfSelf,
+        name_postfix: &'static str,
+    ) -> TokenStream {
+        match self {
+            NamedOrUnnamedField::Named(named) => {
+                named.get_pattern_with_config(type_of_self, name_postfix)
+            }
+            NamedOrUnnamedField::Unnamed(unnamed) => {
+                unnamed.get_pattern_with_config(type_of_self, name_postfix)
+            }
+        }
+    }
+
+    fn get_type(&self) -> &Type {
+        match self {
+            NamedOrUnnamedField::Named(named) => named.get_type(),
+            NamedOrUnnamedField::Unnamed(unnamed) => unnamed.get_type(),
+        }
+    }
 }
 
-pub struct NamedField<'a> {
-    pub name: &'a Ident,
-    pub attrs: &'a Vec<Attribute>,
-    pub ty: &'a Type,
+impl HasAttributes for NamedOrUnnamedFieldMut<'_> {
+    fn get_attributes(&self) -> &[Attribute] {
+        match self {
+            NamedOrUnnamedFieldMut::Named(named) => named.get_attributes(),
+            NamedOrUnnamedFieldMut::Unnamed(unnamed) => unnamed.get_attributes(),
+        }
+    }
+}
+
+impl Field for NamedOrUnnamedFieldMut<'_> {
+    fn get_type_that_needs_constraint(&self) -> Option<Type> {
+        match self {
+            NamedOrUnnamedFieldMut::Named(named) => named.get_type_that_needs_constraint(),
+            NamedOrUnnamedFieldMut::Unnamed(unnamed) => unnamed.get_type_that_needs_constraint(),
+        }
+    }
+
+    fn get_pattern_with_config(
+        &self,
+        type_of_self: TypeOfSelf,
+        name_postfix: &'static str,
+    ) -> TokenStream {
+        match self {
+            NamedOrUnnamedFieldMut::Named(named) => {
+                named.get_pattern_with_config(type_of_self, name_postfix)
+            }
+            NamedOrUnnamedFieldMut::Unnamed(unnamed) => {
+                unnamed.get_pattern_with_config(type_of_self, name_postfix)
+            }
+        }
+    }
+
+    fn get_type(&self) -> &Type {
+        match self {
+            NamedOrUnnamedFieldMut::Named(named) => named.get_type(),
+            NamedOrUnnamedFieldMut::Unnamed(unnamed) => unnamed.get_type(),
+        }
+    }
+}
+
+impl FieldMut for NamedOrUnnamedFieldMut<'_> {
+    fn get_reference_with_config(
+        &mut self,
+        used_for_trait: bool,
+        name_postfix: &'static str,
+    ) -> Expr {
+        match self {
+            NamedOrUnnamedFieldMut::Named(named) => {
+                named.get_reference_with_config(used_for_trait, name_postfix)
+            }
+            NamedOrUnnamedFieldMut::Unnamed(unnamed) => {
+                unnamed.get_reference_with_config(used_for_trait, name_postfix)
+            }
+        }
+    }
+}
+
+pub struct NamedField {
+    pub name: Ident,
+    pub attrs: Vec<Attribute>,
+    pub ty: Type,
     idx: usize,
     is_used: bool,
     used_for_trait: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Variant {
-    Primary,
-    Secondary,
-}
-
-impl Variant {
-    fn get_ident(self, idx: usize) -> Ident {
-        match self {
-            Variant::Primary => format_ident!("_{}", idx),
-            Variant::Secondary => format_ident!("_{}_other", idx),
-        }
-    }
-}
-
-impl Field for NamedField<'_> {
-    fn get_reference_with_config(&mut self, variant: Variant, used_for_trait: bool) -> Expr {
-        self.is_used = true;
-        self.used_for_trait |= used_for_trait;
-        syn::ExprPath {
-            attrs: Vec::new(),
-            qself: None,
-            path: variant.get_ident(self.idx).into(),
-        }
-        .into()
-    }
-
-    fn get_pattern(&self, variant: Variant) -> TokenStream {
-        let ident = self.name;
-        if self.is_used {
-            let reference_name = variant.get_ident(self.idx);
-            quote!(#ident: #reference_name)
-        } else {
-            quote!(#ident: _)
-        }
-    }
-
+impl HasAttributes for NamedField {
     fn get_attributes(&self) -> &[Attribute] {
-        self.attrs
+        &self.attrs
+    }
+}
+
+impl Field for NamedField {
+    fn get_pattern_with_config(
+        &self,
+        type_of_self: TypeOfSelf,
+        name_postfix: &'static str,
+    ) -> TokenStream {
+        let Self {
+            name, is_used, idx, ..
+        } = self;
+        if *is_used {
+            let annotations = type_of_self.as_matcher_tokens();
+            let reference_name = format_ident!("_{}{}", idx, name_postfix);
+            quote!(#name: #annotations #reference_name)
+        } else {
+            quote!(#name: _)
+        }
     }
 
     fn get_type_that_needs_constraint(&self) -> Option<Type> {
         self.used_for_trait.then(|| self.ty.clone())
     }
+
+    fn get_type(&self) -> &Type {
+        &self.ty
+    }
 }
 
-pub struct UnnamedField<'a> {
+impl FieldMut for NamedField {
+    fn get_reference_with_config(
+        &mut self,
+        used_for_trait: bool,
+        name_postfix: &'static str,
+    ) -> Expr {
+        self.is_used = true;
+        self.used_for_trait |= used_for_trait;
+        let path: Expr = syn::ExprPath {
+            attrs: Vec::new(),
+            qself: None,
+            path: format_ident!("_{}{}", self.idx, name_postfix).into(),
+        }
+        .into();
+        if matches!(self.ty, Type::Reference(..)) {
+            Expr::Unary(ExprUnary {
+                attrs: Vec::default(),
+                op: syn::UnOp::Deref(Token![*](Span::call_site())),
+                expr: Box::new(path),
+            })
+        } else {
+            path
+        }
+    }
+}
+
+pub struct UnnamedField {
     pub idx: usize,
-    pub attrs: &'a Vec<Attribute>,
-    pub ty: &'a Type,
+    pub attrs: Vec<Attribute>,
+    pub ty: Type,
     is_used: bool,
     used_for_trait: bool,
 }
 
-impl Field for UnnamedField<'_> {
-    fn get_reference_with_config(&mut self, variant: Variant, used_for_trait: bool) -> Expr {
-        self.is_used = true;
-        self.used_for_trait |= used_for_trait;
-        syn::ExprPath {
-            attrs: Vec::new(),
-            qself: None,
-            path: variant.get_ident(self.idx).into(),
-        }
-        .into()
+impl HasAttributes for UnnamedField {
+    fn get_attributes(&self) -> &[Attribute] {
+        &self.attrs
     }
+}
 
-    fn get_pattern(&self, variant: Variant) -> TokenStream {
-        if self.is_used {
-            variant.get_ident(self.idx).to_token_stream()
+impl Field for UnnamedField {
+    fn get_pattern_with_config(
+        &self,
+        type_of_self: TypeOfSelf,
+        name_postfix: &'static str,
+    ) -> TokenStream {
+        let Self { is_used, idx, .. } = self;
+        if *is_used {
+            let mut ts = type_of_self.as_matcher_tokens();
+            ts.extend(format_ident!("_{}{}", idx, name_postfix).to_token_stream());
+            ts
         } else {
             quote!(_)
         }
     }
 
-    fn get_attributes(&self) -> &[Attribute] {
-        self.attrs
-    }
-
     fn get_type_that_needs_constraint(&self) -> Option<Type> {
         self.used_for_trait.then(|| self.ty.clone())
+    }
+
+    fn get_type(&self) -> &Type {
+        &self.ty
+    }
+}
+
+impl FieldMut for UnnamedField {
+    fn get_reference_with_config(
+        &mut self,
+        used_for_trait: bool,
+        name_postfix: &'static str,
+    ) -> Expr {
+        self.is_used = true;
+        self.used_for_trait |= used_for_trait;
+        let path: Expr = syn::ExprPath {
+            attrs: Vec::new(),
+            qself: None,
+            path: format_ident!("_{}{}", self.idx, name_postfix).into(),
+        }
+        .into();
+        if matches!(self.ty, Type::Reference(..)) {
+            Expr::Unary(ExprUnary {
+                attrs: Vec::default(),
+                op: syn::UnOp::Deref(Token![*](Span::call_site())),
+                expr: Box::new(path),
+            })
+        } else {
+            path
+        }
     }
 }

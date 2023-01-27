@@ -64,7 +64,7 @@ fn binary_serialize_enum() {
                                 let indexer: Stmt =
                                     parse_quote!(let indexer = iter.next().unwrap(););
                                 Ok(std::iter::once(indexer)
-                                    .chain(r#enum.variants.iter_mut().map(|variant| {
+                                    .chain(r#enum.get_variants().iter().map(|variant| {
                                         let idx = variant.idx;
                                         let constructor = variant
                                             .build_constructor(|_| Ok(deserialize_call.clone()))

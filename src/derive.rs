@@ -93,7 +93,14 @@ pub fn derive_trait(structure: syn::DeriveInput, r#trait: Trait) -> TokenStream 
                 GenericParam::Const(_) => 2,
             });
 
-            Some(quote!(<#(#references),*>))
+            let token_stream = quote!(<#(#references),*>);
+
+            // Clear bounds for when reprinted
+            structure_generics
+                .type_params_mut()
+                .for_each(|tp| tp.bounds = Default::default());
+
+            Some(token_stream)
         } else {
             None
         };

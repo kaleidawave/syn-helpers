@@ -145,9 +145,19 @@ impl TraitItem {
 }
 
 pub struct EnumStructure {
-    pub name: Ident,
-    pub attrs: Vec<Attribute>,
-    pub variants: Vec<EnumVariant>,
+    name: Ident,
+    attrs: Vec<Attribute>,
+    variants: Vec<EnumVariant>,
+}
+
+impl EnumStructure {
+    pub fn get_variants(&self) -> &[EnumVariant] {
+        &self.variants
+    }
+
+    pub fn get_variants_mut(&mut self) -> &mut [EnumVariant] {
+        self.variants.as_mut_slice()
+    }
 }
 
 impl HasAttributes for EnumStructure {
@@ -168,8 +178,9 @@ pub struct StructStructure {
 }
 
 pub trait Constructable {
-    fn get_path(&self) -> Path;
+    fn get_constructor_path(&self) -> Path;
 
+    /// Builds a constructor expression by evaluating a expression generator for each field
     fn build_constructor(
         &self,
         generator: impl Fn(NamedOrUnnamedField) -> Result<Expr, Box<dyn Error>>,
@@ -196,7 +207,7 @@ impl Constructable for StructStructure {
         &mut self.fields
     }
 
-    fn get_path(&self) -> Path {
+    fn get_constructor_path(&self) -> Path {
         self.name.clone().into()
     }
 }
@@ -218,7 +229,7 @@ impl Constructable for EnumVariant {
         &mut self.fields
     }
 
-    fn get_path(&self) -> Path {
+    fn get_constructor_path(&self) -> Path {
         self.full_path.clone()
     }
 }
@@ -250,11 +261,18 @@ impl Structure {
         }
     }
 
-    pub fn attributes(&self) -> &[Attribute] {
+    pub fn get_attributes(&self) -> &[Attribute] {
         match self {
             // attributes have been moved to fields here
             Structure::Struct(r#struct) => r#struct.fields.get_field_attributes(),
             Structure::Enum(r#enum) => r#enum.attrs.as_slice(),
+        }
+    }
+
+    pub fn get_name(&self) -> &Ident {
+        match self {
+            Structure::Struct(r#struct) => &r#struct.name,
+            Structure::Enum(r#enum) => &r#enum.name,
         }
     }
 }
@@ -286,10 +304,12 @@ impl Constructable for ConstructableStructure<'_> {
         }
     }
 
-    fn get_path(&self) -> Path {
+    fn get_constructor_path(&self) -> Path {
         match self {
-            ConstructableStructure::Struct(r#struct) => r#struct.get_path(),
-            ConstructableStructure::EnumVariant(enum_variant, _) => enum_variant.get_path(),
+            ConstructableStructure::Struct(r#struct) => r#struct.get_constructor_path(),
+            ConstructableStructure::EnumVariant(enum_variant, _) => {
+                enum_variant.get_constructor_path()
+            }
         }
     }
 }

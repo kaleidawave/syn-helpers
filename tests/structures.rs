@@ -183,3 +183,32 @@ fn derive_add_where_clause() {
         }
     )
 }
+
+#[test]
+fn derive_add_where_clause_to_associated_item() {
+    let r#struct: DeriveInput = parse_quote! {
+        struct MyStruct<T: OtherTrait> {
+            item: T::X,
+            a: A,
+            #[ignore]
+            b: B,
+        }
+    };
+
+    let stream = derive_trait(r#struct, example_trait(None));
+
+    token_stream_eq!(
+        stream,
+        quote! {
+            #[automatically_derived]
+            impl<T: OtherTrait> ::my_crate::MyTrait for MyStruct<T>
+            where T::X : ::my_crate::MyTrait {
+                fn method_one(&self) {
+                    let MyStruct { item: ref _0, a: ref _1, b : _ } = self;
+                    do_thing(_0);
+                    do_thing(_1);
+                }
+            }
+        }
+    )
+}

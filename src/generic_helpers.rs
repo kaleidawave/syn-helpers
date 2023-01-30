@@ -50,7 +50,8 @@ impl<'a, 'b> Visit<'b> for ReferencesAGeneric<'a> {
         if self.found {
             return;
         }
-        if let Some(path) = i.path.get_ident() {
+        // Not sure when this is `None`?
+        if let Some(segment) = i.path.segments.first() {
             self.found = self
                 .generics_on_structures
                 .params
@@ -62,7 +63,7 @@ impl<'a, 'b> Visit<'b> for ReferencesAGeneric<'a> {
                         None
                     }
                 })
-                .any(|ty| &ty.ident == path);
+                .any(|ty| ty.ident == segment.ident);
         }
     }
 }

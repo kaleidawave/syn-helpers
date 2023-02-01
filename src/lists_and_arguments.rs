@@ -7,6 +7,7 @@ use syn::{
     Token,
 };
 
+/// A comma separated list of `T`
 pub struct CommaSeparatedList<T>(pub Punctuated<T, Token![,]>);
 
 impl<T: Parse> Parse for CommaSeparatedList<T> {

@@ -212,3 +212,28 @@ fn derive_add_where_clause_to_associated_item() {
         }
     )
 }
+
+#[test]
+fn derive_add_where_clause_to_parameterized_item() {
+    let r#struct: DeriveInput = parse_quote! {
+        struct MyStruct<T: OtherTrait> {
+            item: Box<T>,
+        }
+    };
+
+    let stream = derive_trait(r#struct, example_trait(None));
+
+    token_stream_eq!(
+        stream,
+        quote! {
+            #[automatically_derived]
+            impl<T: OtherTrait> ::my_crate::MyTrait for MyStruct<T>
+            where Box<T> : ::my_crate::MyTrait {
+                fn method_one(&self) {
+                    let MyStruct { item: ref _0 } = self;
+                    do_thing(_0);
+                }
+            }
+        }
+    )
+}

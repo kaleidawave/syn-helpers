@@ -15,7 +15,7 @@ use syn::{
 };
 
 pub use proc_macro2;
-pub use quote::quote;
+pub use quote::{format_ident, quote};
 pub use syn;
 
 pub use derive::derive_trait;
@@ -54,14 +54,17 @@ fn dyn_error_to_compile_error_tokens(err: Box<dyn Error>) -> TokenStream {
     quote!(compile_error!(#error_as_string))
 }
 
+/// A declaration for a Rust [trait](https://doc.rust-lang.org/rust-by-example/trait.html)
 pub struct Trait {
     pub name: Path,
     pub generic_parameters: Option<Vec<GenericParam>>,
     pub items: Vec<TraitItem>,
 }
 
+/// Statements returned from the handler
 type HandlerResult = Result<Vec<Stmt>, Box<dyn Error>>;
 
+/// A item under a trait
 pub enum TraitItem {
     Method {
         name: Ident,
@@ -80,6 +83,7 @@ pub enum TraitItem {
     },
 }
 
+/// What ownership the method requires
 #[derive(Clone, Copy)]
 pub enum TypeOfSelf {
     /// `&self`
@@ -109,6 +113,7 @@ impl TypeOfSelf {
 }
 
 impl TraitItem {
+    /// Create a new method (something that takes `self`, `&self` or `&mut self`)
     pub fn new_method(
         name: Ident,
         generic_parameters: Option<Vec<GenericParam>>,
@@ -127,6 +132,7 @@ impl TraitItem {
         }
     }
 
+    /// Create a new associated function (doesn't take any reference of self)
     pub fn new_associated_function(
         name: Ident,
         generic_parameters: Option<Vec<GenericParam>>,
@@ -144,6 +150,7 @@ impl TraitItem {
     }
 }
 
+/// An [Enum](https://doc.rust-lang.org/rust-by-example/custom_types/enum.html)
 pub struct EnumStructure {
     name: Ident,
     attrs: Vec<Attribute>,
@@ -166,18 +173,22 @@ impl HasAttributes for EnumStructure {
     }
 }
 
+/// A member of an [EnumStructure]
 pub struct EnumVariant {
     full_path: Path,
     pub idx: usize,
     fields: Fields,
 }
 
+/// A [Struct](https://doc.rust-lang.org/rust-by-example/custom_types/structs.html)
 pub struct StructStructure {
     name: Ident,
     fields: Fields,
 }
 
+/// A Rust structure which can be *created* (either a struct or enum variant)
 pub trait Constructable {
+    /// Get the path required to construct the expression
     fn get_constructor_path(&self) -> Path;
 
     /// Builds a constructor expression by evaluating a expression generator for each field
@@ -238,17 +249,20 @@ pub trait HasAttributes {
     fn get_attributes(&self) -> &[Attribute];
 }
 
+/// Either a [StructStructure] or [EnumStructure]
 pub enum Structure {
     Struct(StructStructure),
     Enum(EnumStructure),
 }
 
+/// Either a [StructStructure] or [EnumVariant] (with it's parents attributes)
 pub enum ConstructableStructure<'a> {
     Struct(&'a mut StructStructure),
     EnumVariant(&'a mut EnumVariant, &'a [Attribute]),
 }
 
 impl Structure {
+    /// Al
     fn all_fields(&self) -> impl Iterator<Item = NamedOrUnnamedField<'_>> {
         match self {
             Structure::Struct(r#struct) => Either2::One(r#struct.get_fields().fields_iterator()),
@@ -261,6 +275,7 @@ impl Structure {
         }
     }
 
+    /// The top attributes
     pub fn get_attributes(&self) -> &[Attribute] {
         match self {
             // attributes have been moved to fields here
@@ -269,6 +284,7 @@ impl Structure {
         }
     }
 
+    /// The declaration name
     pub fn get_name(&self) -> &Ident {
         match self {
             Structure::Struct(r#struct) => &r#struct.name,
@@ -337,6 +353,7 @@ impl<'a> ConstructableStructure<'a> {
     }
 }
 
+/// Prints a path out as its source representation
 pub fn path_to_string(path: Path) -> String {
     let mut buf = String::new();
     if path.leading_colon.is_some() {

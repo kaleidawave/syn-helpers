@@ -1,15 +1,9 @@
-use std::error::Error;
-use std::iter;
+use std::{error::Error, iter};
 
 use either_n::Either3;
-use proc_macro2::Span;
-use proc_macro2::{Ident, TokenStream};
-use quote::format_ident;
-use quote::quote;
-use quote::ToTokens;
-use syn::ExprUnary;
-use syn::Token;
-use syn::{parse_quote, Attribute, Expr, Path, Type};
+use proc_macro2::{Ident, Span, TokenStream};
+use quote::{format_ident, quote, ToTokens};
+use syn::{parse_quote, Attribute, Expr, ExprUnary, Path, Token, Type};
 
 use crate::{HasAttributes, TypeOfSelf};
 
@@ -116,6 +110,61 @@ impl Fields {
             Fields::Unit(..) => Ok(parse_quote! { #constructor }),
         }
     }
+
+    /// Will just return `None` if member is not of matching form. Also will return `None` if cannot find the field
+    pub fn get_field_by_member(&self, member: syn::Member) -> Option<NamedOrUnnamedField> {
+        match self {
+            Fields::Named(named, _) => {
+                if let syn::Member::Named(ident) = member {
+                    named
+                        .iter()
+                        .find(|named| named.name == ident)
+                        .map(NamedOrUnnamedField::Named)
+                } else {
+                    None
+                }
+            }
+            Fields::Unnamed(unnamed, _) => {
+                if let syn::Member::Unnamed(idx) = member {
+                    unnamed
+                        .get(idx.index as usize)
+                        .map(NamedOrUnnamedField::Unnamed)
+                } else {
+                    None
+                }
+            }
+            Fields::Unit(_) => None,
+        }
+    }
+
+    /// Will just return `None` if member is not of matching form. Also will return `None` if cannot find the field
+    pub fn get_field_by_member_mut(
+        &mut self,
+        member: syn::Member,
+    ) -> Option<NamedOrUnnamedFieldMut> {
+        match self {
+            Fields::Named(named, _) => {
+                if let syn::Member::Named(ident) = member {
+                    named
+                        .iter_mut()
+                        .find(|named| named.name == ident)
+                        .map(NamedOrUnnamedFieldMut::Named)
+                } else {
+                    None
+                }
+            }
+            Fields::Unnamed(unnamed, _) => {
+                if let syn::Member::Unnamed(idx) = member {
+                    unnamed
+                        .get_mut(idx.index as usize)
+                        .map(NamedOrUnnamedFieldMut::Unnamed)
+                } else {
+                    None
+                }
+            }
+            Fields::Unit(_) => None,
+        }
+    }
 }
 
 /// Converts to syn::Fields to syn_helpers::Fields
@@ -176,6 +225,7 @@ pub trait Field: HasAttributes {
     fn get_type_that_needs_constraint(&self) -> Option<Type>;
 }
 
+/// Getting a reference to the field is recorded
 pub trait FieldMut: Field {
     /// Get a expression which refers to this field. Note that reference takes the form `_` + index of field, this is
     /// to prevent possible clashes with parameter names.
@@ -191,11 +241,13 @@ pub trait FieldMut: Field {
     ) -> Expr;
 }
 
+/// Either [NamedField] or [UnnamedField]
 pub enum NamedOrUnnamedField<'a> {
     Named(&'a NamedField),
     Unnamed(&'a UnnamedField),
 }
 
+/// Either [NamedField] or [UnnamedField]
 pub enum NamedOrUnnamedFieldMut<'a> {
     Named(&'a mut NamedField),
     Unnamed(&'a mut UnnamedField),

@@ -13,14 +13,19 @@ use crate::{
     TraitItem,
 };
 
-pub fn derive_trait(structure: syn::DeriveInput, r#trait: Trait) -> TokenStream {
+/// Creates an impl block for the respective trait over the item
+///
+/// Handles a few complex things
+/// - Collisions with the names of generics on the trait and the structure
+/// - Creating where clauses for referenced items
+pub fn derive_trait(item: syn::DeriveInput, r#trait: Trait) -> TokenStream {
     let syn::DeriveInput {
         generics: mut structure_generics,
         attrs,
         data,
         ident: structure_name,
         ..
-    } = structure;
+    } = item;
 
     let Trait {
         name: trait_name,

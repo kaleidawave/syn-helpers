@@ -29,7 +29,7 @@ jobs:
         run: |
           git tag "release/${{ steps.release.outputs.new-version }}"
           git add .
-          git commit -m "Release: ${{ steps.release.outputs.new-versions-description }}"
+          git commit -m "Release: ${{ steps.release.outputs.new-version }}"
           git push --tags origin main
       - name: Discord
         uses: dusmartijngames/discord-webhook-notify@master

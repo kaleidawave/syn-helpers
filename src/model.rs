@@ -5,6 +5,7 @@ use syn::{parse_quote, Stmt};
 
 use crate::{ConstructableStructure, EnumStructure, Structure, TypeOfSelf};
 
+/// A intermediate type that wraps a [Structure]
 pub struct Item<'a> {
     pub structure: &'a mut Structure,
     pub self_type: TypeOfSelf,
@@ -40,6 +41,7 @@ impl Item<'_> {
                         }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+
                 Ok(vec![parse_quote!(match self {
                     #(#branches)*
                 })])
@@ -62,6 +64,4 @@ impl Item<'_> {
             }
         }
     }
-
-    pub fn evaluate_pattern() {}
 }

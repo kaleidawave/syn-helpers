@@ -8,6 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CACHE_PATHS: |
+    ~/.cargo/bin/
+    ~/.cargo/registry/index/
+    ~/.cargo/registry/cache/
+    ~/.cargo/git/db/
+    target/
 
 jobs:
   validity:
@@ -16,10 +22,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/cache@v3
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+          path: ${{ env.CACHE_PATHS }}
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Check source is valid
         run: cargo check --workspace
@@ -30,13 +33,23 @@ jobs:
       - uses: actions/checkout@v3
       - name: Check formatting with rustfmt
         run: cargo fmt --all --check
+      - uses: brndnmtthws/rust-action-cargo-binstall@v1
+        with:
+          packages: taplo-cli
+      - name: Check TOML formatting with taplo
+        run: |
+          taplo fmt --check **/*/Cargo.toml
 
   tests:
     needs: validity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Run tests
+      - uses: actions/cache@v3
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run all tests
         run: cargo test --workspace --verbose --all-features
 
   clippy:
@@ -44,5 +57,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Lint code
+      - uses: actions/cache@v3
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Lint code with clippy
         run: cargo clippy
+
+  publish-ability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Check that it will publish to crates
+        run: |
+          cargo metadata --offline --format-version 1 --no-deps | jq -r ".workspace_members[]" | while read -r _n _v pathInfo ; do
+            cd ${pathInfo:13:-1}
+            cargo publish --no-verify --dry-run
+          done
+        shell: bash

@@ -1,8 +1,9 @@
 use proc_macro2::Span;
 use quote::quote;
-use syn::{parse_quote, DeriveInput, Ident, Stmt};
+use syn::{parse_quote, DeriveInput, Expr, Ident, Stmt};
 use syn_helpers::{
-    Constructable, FieldMut, NamedOrUnnamedFieldMut, Structure, Trait, TraitItem, TypeOfSelf,
+    derive_trait, Constructable, FieldMut, NamedOrUnnamedFieldMut, Structure, Trait, TraitItem,
+    TypeOfSelf,
 };
 
 macro_rules! token_stream_eq {
@@ -20,7 +21,7 @@ fn binary_serialize_enum() {
         }
     };
 
-    let stream = syn_helpers::derive_trait(
+    let stream = derive_trait(
         input,
         Trait {
             name: Ident::new("BinarySerializable", Span::call_site()).into(),
@@ -44,7 +45,7 @@ fn binary_serialize_enum() {
                                 .chain(constructable.get_fields_mut().fields_iterator_mut().map(
                                     |mut field: NamedOrUnnamedFieldMut| -> Stmt {
                                         let reference = field.get_reference();
-                                        parse_quote!(#reference.serialize(buf);)
+                                        parse_quote!(crate::BinarySerializable::serialize(#reference, buf);)
                                     },
                                 ));
                             Ok(iterator.collect())
@@ -57,27 +58,34 @@ fn binary_serialize_enum() {
                     vec![parse_quote!(iter: &mut I)],
                     Some(parse_quote!(Self)),
                     |structure| {
-                        let deserialize_call: syn::Expr =
+                        let deserialize_call: Expr =
                             parse_quote!(BinarySerializable::deserialize(iter));
                         match structure {
                             Structure::Enum(r#enum) => {
                                 let indexer: Stmt =
                                     parse_quote!(let indexer = iter.next().unwrap(););
+
+                                let bad_case = parse_quote!(
+                                    unreachable!("invalid discriminant when deserializing enum");
+                                );
+
                                 Ok(std::iter::once(indexer)
                                     .chain(r#enum.get_variants().iter().map(|variant| {
-                                        let idx = variant.idx;
+                                        let idx = variant.idx as u8;
                                         let constructor = variant
                                             .build_constructor(|_| Ok(deserialize_call.clone()))
                                             .unwrap();
+
                                         parse_quote!(if indexer == #idx {
                                             return #constructor;
                                         })
                                     }))
+                                    .chain(std::iter::once(bad_case))
                                     .collect())
                             }
                             Structure::Struct(r#struct) => r#struct
                                 .build_constructor(|_| Ok(deserialize_call.clone()))
-                                .map(|expr| vec![syn::Stmt::Expr(expr)]),
+                                .map(|expr| vec![Stmt::Expr(expr)]),
                         }
                     },
                 ),

@@ -18,7 +18,7 @@ pub use proc_macro2;
 pub use quote::{format_ident, quote};
 pub use syn;
 
-pub use derive::derive_trait;
+pub use derive::*;
 pub use fields::*;
 pub use lists_and_arguments::*;
 pub use model::Item;
@@ -262,7 +262,7 @@ pub enum ConstructableStructure<'a> {
 }
 
 impl Structure {
-    /// Al
+    /// Iterator over all the fields
     fn all_fields(&self) -> impl Iterator<Item = NamedOrUnnamedField<'_>> {
         match self {
             Structure::Struct(r#struct) => Either2::One(r#struct.get_fields().fields_iterator()),

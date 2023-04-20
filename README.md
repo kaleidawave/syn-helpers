@@ -1,20 +1,20 @@
 # Syn-Helpers
 
-[![](https://img.shields.io/crates/v/syn-helpers)](https://crates.io/crates/syn-helpers)
-[![](https://img.shields.io/docsrs/syn-helpers)](https://docs.rs/syn-helpers/latest/syn_helpers/)
+[![crates.io badge](https://img.shields.io/crates/v/syn-helpers)](https://crates.io/crates/syn-helpers)
+[![docs.rs badge](https://img.shields.io/docsrs/syn-helpers)](https://docs.rs/syn-helpers/latest/syn_helpers/)
 
 Framework for building derive proc macros over structures (`struct` and `enum`).
 
 Handles:
-- Getting expressions referencing fields 
+- Getting expressions referencing fields
 - Building patterns for enums
 - Using the same logic for deriving over a enum or struct
 - Error handling and generating `compile_error` output
 - Generics on trait and structure (including conflict rectification)
 
-This crate extends (and re-exports) the excellent [syn](https://crates.io/crates/syn) and [quote](https://crates.io/crates/quote)
+This crate extends (and re-exports) the excellent [syn](https://crates.io/crates/syn) and [quote](https://crates.io/crates/quote) crates.
 
-### Example
+## Example
 
 Evaluate `do_thing` function on every field (expect those with the `#[ignore]` attribute)
 
@@ -80,9 +80,9 @@ assert_eq!(
 )
 ```
 
-### Used in:
+### Used in
 - [self-rust-tokenize](https://github.com/kaleidawave/self-rust-tokenize)
 - [derive-partial-eq-extras](https://github.com/kaleidawave/derive-partial-eq-extras)
 - [derive-debug-extras](https://github.com/kaleidawave/derive-debug-extras)
 
-*Design work in progress*
+Design is a *work in progress*

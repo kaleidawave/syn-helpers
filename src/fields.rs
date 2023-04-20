@@ -209,6 +209,12 @@ pub(crate) fn syn_fields_to_fields(fields: syn::Fields, attributes: Vec<syn::Att
 
 /// A *Field* is declaration of some data under a object
 pub trait Field: HasAttributes {
+    /// Returns true if this field matches the same type
+    #[cfg(feature = "field_is_type")]
+    fn is_type(&self, ty: &Type) -> bool {
+        self.get_type() == ty
+    }
+
     fn get_type(&self) -> &Type;
 
     /// Get a pattern for reading this field
@@ -216,12 +222,14 @@ pub trait Field: HasAttributes {
         Self::get_pattern_with_config(self, type_of_self, "")
     }
 
+    /// Get pattern with configuration for the ownership (with [TypeOfSelf] and whether to prefix the identifier)
     fn get_pattern_with_config(
         &self,
         type_of_self: TypeOfSelf,
         name_postfix: &'static str,
     ) -> TokenStream;
 
+    /// Returns the fields type **if** it used for the trait (only used internally)
     fn get_type_that_needs_constraint(&self) -> Option<Type>;
 }
 
@@ -229,7 +237,7 @@ pub trait Field: HasAttributes {
 pub trait FieldMut: Field {
     /// Get a expression which refers to this field. Note that reference takes the form `_` + index of field, this is
     /// to prevent possible clashes with parameter names.
-    /// Use [Field::get_reference_with_config] to for different options
+    /// Use [FieldMut::get_reference_with_config] to for different options
     fn get_reference(&mut self) -> Expr {
         Self::get_reference_with_config(self, true, "")
     }

@@ -13,6 +13,15 @@ use crate::{
     TraitItem,
 };
 
+/// Same as [derive_trait] function, but handles parsing the [TokenStream]
+pub fn derive_trait_from_token_stream(tokens: TokenStream, r#trait: Trait) -> TokenStream {
+    let result = syn::parse2::<syn::DeriveInput>(tokens);
+    match result {
+        Ok(input) => derive_trait(input, r#trait),
+        Err(_) => quote! { compile_error!("Invalid input") },
+    }
+}
+
 /// Creates an impl block for the respective trait over the item
 ///
 /// Handles a few complex things

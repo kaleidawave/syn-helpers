@@ -38,7 +38,7 @@ fn binary_serialize_enum() {
                             let iterator = constructable
                                 .as_enum_variant()
                                 .map(|variant| {
-                                    let idx = variant.idx;
+                                    let idx = variant.idx as u8;
                                     parse_quote!(buf.push(#idx);)
                                 })
                                 .into_iter()
@@ -59,7 +59,7 @@ fn binary_serialize_enum() {
                     Some(parse_quote!(Self)),
                     |structure| {
                         let deserialize_call: Expr =
-                            parse_quote!(BinarySerializable::deserialize(iter));
+                            parse_quote!(crate::BinarySerializable::deserialize(iter));
                         match structure {
                             Structure::Enum(r#enum) => {
                                 let indexer: Stmt =
@@ -100,27 +100,28 @@ fn binary_serialize_enum() {
             fn serialize(&self, buf: &mut Vec<u8>) {
                 match self {
                     X::A { a: ref _0 } => {
-                        buf.push(0usize);
-                        _0.serialize(buf);
+                        buf.push(0u8);
+                        crate::BinarySerializable::serialize(_0, buf);
                     }
                     X::B { b: ref _0 } => {
-                        buf.push(1usize);
-                        _0.serialize(buf);
+                        buf.push(1u8);
+                        crate::BinarySerializable::serialize(_0, buf);
                     }
                 }
             }
             fn deserialize<I: Iterator<Item = u8> >(iter: &mut I) -> Self {
                 let indexer = iter.next().unwrap();
-                if indexer == 0usize {
+                if indexer == 0u8 {
                     return X::A {
-                        a: BinarySerializable::deserialize(iter)
+                        a: crate::BinarySerializable::deserialize(iter)
                     };
                 }
-                if indexer == 1usize {
+                if indexer == 1u8 {
                     return X::B {
-                        b: BinarySerializable::deserialize(iter)
+                        b: crate::BinarySerializable::deserialize(iter)
                     };
                 }
+                unreachable!("invalid discriminant when deserializing enum");
             }
         }
     );

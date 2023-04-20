@@ -84,5 +84,6 @@ assert_eq!(
 - [self-rust-tokenize](https://github.com/kaleidawave/self-rust-tokenize)
 - [derive-partial-eq-extras](https://github.com/kaleidawave/derive-partial-eq-extras)
 - [derive-debug-extras](https://github.com/kaleidawave/derive-debug-extras)
+- [Ezno's parser](https://github.com/kaleidawave/ezno/blob/main/parser/visitable-derive/macro.rs)
 
 Design is a *work in progress*

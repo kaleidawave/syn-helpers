@@ -4,6 +4,7 @@ description = "Framework for building derive macros"
 license = "MIT"
 repository = "https://github.com/kaleidawave/syn-helpers"
 authors = ["Ben <kaleidawave@gmail.com>"]
+keywords = ["proc-macro-derive", "syn", "code-generation", "enum"]
 categories = [
     "development-tools::procedural-macro-helpers",
     "development-tools::build-utils",

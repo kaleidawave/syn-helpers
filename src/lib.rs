@@ -51,7 +51,7 @@ pub(crate) fn generic_param_to_generic_argument_token_stream(
 
 fn dyn_error_to_compile_error_tokens(err: Box<dyn Error>) -> TokenStream {
     let error_as_string = syn::LitStr::new(&err.to_string(), Span::call_site());
-    quote!(compile_error!(#error_as_string))
+    quote!(compile_error!(#error_as_string);)
 }
 
 /// A declaration for a Rust [trait](https://doc.rust-lang.org/rust-by-example/trait.html)

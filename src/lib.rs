@@ -10,12 +10,10 @@ use std::error::Error;
 
 use either_n::Either2;
 use proc_macro2::{Ident, Span, TokenStream};
-use syn::{
-    Attribute, ConstParam, Expr, FnArg, GenericParam, LifetimeDef, Path, Stmt, Type, TypeParam,
-};
+use syn::{Attribute, ConstParam, Expr, FnArg, GenericParam, Path, Stmt, Type, TypeParam};
 
 pub use proc_macro2;
-pub use quote::{format_ident, quote};
+pub use quote::{format_ident, quote, ToTokens};
 pub use syn;
 
 pub use derive::*;
@@ -44,12 +42,12 @@ pub(crate) fn generic_param_to_generic_argument_token_stream(
 ) -> TokenStream {
     match trait_generic_parameter {
         GenericParam::Const(ConstParam { ident, .. })
-        | GenericParam::Type(TypeParam { ident, .. }) => quote! { #ident },
-        GenericParam::Lifetime(LifetimeDef { lifetime, .. }) => quote! { #lifetime },
+        | GenericParam::Type(TypeParam { ident, .. }) => ident.to_token_stream(),
+        GenericParam::Lifetime(lifetime) => lifetime.to_token_stream(),
     }
 }
 
-fn dyn_error_to_compile_error_tokens(err: Box<dyn Error>) -> TokenStream {
+pub fn dyn_error_to_compile_error_tokens(err: Box<dyn Error>) -> TokenStream {
     let error_as_string = syn::LitStr::new(&err.to_string(), Span::call_site());
     quote!(compile_error!(#error_as_string))
 }

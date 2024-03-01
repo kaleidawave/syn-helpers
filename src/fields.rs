@@ -27,9 +27,7 @@ impl Fields {
         }
     }
 
-    pub fn fields_iterator(
-        &self,
-    ) -> impl Iterator<Item = NamedOrUnnamedField<'_>> + ExactSizeIterator {
+    pub fn fields_iterator(&self) -> impl ExactSizeIterator<Item = NamedOrUnnamedField<'_>> {
         match self {
             Fields::Named(fields, ..) => {
                 Either3::One(fields.iter().map(NamedOrUnnamedField::Named))
@@ -43,7 +41,7 @@ impl Fields {
 
     pub fn fields_iterator_mut(
         &mut self,
-    ) -> impl Iterator<Item = NamedOrUnnamedFieldMut<'_>> + ExactSizeIterator {
+    ) -> impl ExactSizeIterator<Item = NamedOrUnnamedFieldMut<'_>> {
         match self {
             Fields::Named(fields, ..) => {
                 Either3::One(fields.iter_mut().map(NamedOrUnnamedFieldMut::Named))

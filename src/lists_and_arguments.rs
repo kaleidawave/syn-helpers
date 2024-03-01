@@ -12,7 +12,7 @@ pub struct CommaSeparatedList<T>(pub Punctuated<T, Token![,]>);
 
 impl<T: Parse> Parse for CommaSeparatedList<T> {
     fn parse(input: parse::ParseStream) -> syn::Result<Self> {
-        input.parse_terminated(T::parse).map(Self)
+        input.parse_terminated(T::parse, Token![,]).map(Self)
     }
 }
 

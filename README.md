@@ -42,7 +42,7 @@ let my_trait = Trait {
                         if field
                             .get_attributes()
                             .iter()
-                            .any(|attr| attr.path.is_ident("ignore"))
+                            .any(|attr| attr.path().is_ident("ignore"))
                         {
                             None
                         } else {

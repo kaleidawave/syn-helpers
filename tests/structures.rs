@@ -31,7 +31,7 @@ fn example_trait(generic_parameters: Option<Vec<GenericParam>>) -> Trait {
                             if field
                                 .get_attributes()
                                 .iter()
-                                .any(|attr| attr.path.is_ident("ignore"))
+                                .any(|attr| attr.path().is_ident("ignore"))
                             {
                                 None
                             } else {

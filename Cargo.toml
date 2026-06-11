@@ -10,7 +10,7 @@ categories = [
     "development-tools::build-utils",
 ]
 version = "0.5.0"
-edition = "2018"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

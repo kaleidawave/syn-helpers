@@ -1,359 +1,344 @@
-#![doc = include_str!("../README.md")]
+pub mod emit;
 
-mod derive;
-mod fields;
-mod generic_helpers;
-mod lists_and_arguments;
-mod model;
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
 
-use std::error::Error;
+#[derive(Debug)]
+pub struct Name {
+	pub name: String,
+	pub generics: Option<TokenStream>,
+}
 
-use either_n::Either2;
-use proc_macro2::{Ident, Span, TokenStream};
-use syn::{Attribute, ConstParam, Expr, FnArg, GenericParam, Path, Stmt, Type, TypeParam};
+/// Anything that can have a `derive` on it
+/// TODO function + rename to deriveInput
+#[derive(Debug)]
+pub enum Item {
+	Enum(Enum),
+	Struct(Struct),
+}
 
-pub use proc_macro2;
-pub use quote::{ToTokens, format_ident, quote};
-pub use syn;
+#[derive(Debug)]
+pub struct Enum {
+	pub attributes: Attributes,
+	pub publicity: Publicity,
+	pub name: Name,
+	pub variants: Vec<Variant>,
+}
 
-pub use derive::*;
-pub use fields::*;
-pub use lists_and_arguments::*;
-pub use model::Item;
+#[derive(Debug, Default)]
+pub enum Publicity {
+	#[default]
+	Private,
+	Public(Option<TokenStream>),
+}
 
-/// Returns true if same variant and same name, ignores bounds
-pub(crate) fn generic_parameters_have_same_name(
-	generic_parameter1: &GenericParam,
-	generic_parameter2: &GenericParam,
-) -> bool {
-	match (generic_parameter1, generic_parameter2) {
-		(GenericParam::Type(gtp1), GenericParam::Type(gtp2)) => gtp1.ident == gtp2.ident,
-		(GenericParam::Lifetime(glp1), GenericParam::Lifetime(glp2)) => {
-			glp1.lifetime.ident == glp2.lifetime.ident
-		}
-		(GenericParam::Const(gcp1), GenericParam::Const(gcp2)) => gcp1.ident == gcp2.ident,
-		_ => false,
+#[derive(Debug)]
+pub struct Type(pub TokenStream);
+
+#[derive(Debug)]
+pub struct Variant(pub Struct);
+
+#[derive(Debug)]
+pub struct Struct {
+	pub attributes: Attributes,
+	pub publicity: Publicity,
+	pub name: Name,
+	pub fields: Fields,
+}
+
+#[derive(Debug)]
+pub enum Fields {
+	Unit,
+	UnnamedFields(Vec<Field<()>>),
+	NamedFields(Vec<Field<String>>),
+}
+
+#[derive(Debug)]
+pub struct Field<N> {
+	pub attributes: Attributes,
+	pub publicity: Publicity,
+	pub name: N,
+	pub r#type: Type,
+}
+
+pub type Attributes = Vec<Attribute>;
+
+/// TODO unsafe
+#[derive(Debug)]
+pub struct Attribute {
+	pub path: String,
+	pub value: Option<(bool, TokenStream)>,
+}
+
+impl Attribute {
+	pub fn name_eq(&self, is: &str) -> bool {
+		self.path == is
+		// let inner = self.0.clone();
+		// if let Some(TokenTree::Ident(ident)) = inner.into_iter().next() {
+		// 	ident == is
+		// } else {
+		// 	// TODO
+		// 	false
+		// }
 	}
 }
 
-/// Removes the bounds and uses the parameter as a reference
-pub(crate) fn generic_param_to_generic_argument_token_stream(
-	trait_generic_parameter: &GenericParam,
-) -> TokenStream {
-	match trait_generic_parameter {
-		GenericParam::Const(ConstParam { ident, .. })
-		| GenericParam::Type(TypeParam { ident, .. }) => ident.to_token_stream(),
-		GenericParam::Lifetime(lifetime) => lifetime.to_token_stream(),
-	}
-}
+impl std::str::FromStr for Item {
+	type Err = proc_macro2::LexError;
 
-pub fn dyn_error_to_compile_error_tokens(err: Box<dyn Error>) -> TokenStream {
-	let error_as_string = syn::LitStr::new(&err.to_string(), Span::call_site());
-	quote!(compile_error!(#error_as_string);)
-}
+	fn from_str(source: &str) -> Result<Self, Self::Err> {
+		let input = str::parse::<TokenStream>(source).unwrap();
+		let mut input = input.into_iter().peekable();
 
-/// A declaration for a Rust [trait](https://doc.rust-lang.org/rust-by-example/trait.html)
-pub struct Trait {
-	pub name: Path,
-	pub generic_parameters: Option<Vec<GenericParam>>,
-	pub items: Vec<TraitItem>,
-}
+		let attributes = parse_attributes(&mut input);
+		let publicity = parse_publicity(&mut input);
 
-/// Statements returned from the handler
-type HandlerResult = Result<Vec<Stmt>, Box<dyn Error>>;
-
-/// A item under a trait
-pub enum TraitItem {
-	Method {
-		name: Ident,
-		generic_parameters: Option<Vec<GenericParam>>,
-		self_type: TypeOfSelf,
-		other_parameters: Vec<FnArg>,
-		return_type: Option<Type>,
-		handler: Box<dyn for<'a> Fn(Item<'a>) -> HandlerResult>,
-	},
-	AssociatedFunction {
-		name: Ident,
-		generic_parameters: Option<Vec<GenericParam>>,
-		parameters: Vec<FnArg>,
-		return_type: Option<Type>,
-		handler: Box<dyn for<'a> Fn(&'a mut Structure) -> HandlerResult>,
-	},
-}
-
-/// What ownership the method requires
-#[derive(Clone, Copy)]
-pub enum TypeOfSelf {
-	/// `&self`
-	Reference,
-	/// `&mut self`
-	MutableReference,
-	/// `self`
-	Owned,
-}
-
-impl TypeOfSelf {
-	fn as_parameter_tokens(&self) -> TokenStream {
-		match self {
-			TypeOfSelf::Reference => quote!(&self),
-			TypeOfSelf::MutableReference => quote!(&mut self),
-			TypeOfSelf::Owned => quote!(self),
-		}
-	}
-
-	fn as_matcher_tokens(&self) -> TokenStream {
-		match self {
-			TypeOfSelf::Reference => quote!(ref),
-			TypeOfSelf::MutableReference => quote!(ref mut),
-			TypeOfSelf::Owned => TokenStream::default(),
-		}
-	}
-}
-
-impl TraitItem {
-	/// Create a new method (something that takes `self`, `&self` or `&mut self`)
-	pub fn new_method(
-		name: Ident,
-		generic_parameters: Option<Vec<GenericParam>>,
-		self_type: TypeOfSelf,
-		other_parameters: Vec<FnArg>,
-		return_type: Option<Type>,
-		handler: impl for<'a> Fn(Item<'a>) -> HandlerResult + 'static,
-	) -> Self {
-		Self::Method {
-			name,
-			generic_parameters,
-			self_type,
-			other_parameters,
-			return_type,
-			handler: Box::new(handler),
-		}
-	}
-
-	/// Create a new associated function (doesn't take any reference of self)
-	pub fn new_associated_function(
-		name: Ident,
-		generic_parameters: Option<Vec<GenericParam>>,
-		parameters: Vec<FnArg>,
-		return_type: Option<Type>,
-		handler: impl for<'a> Fn(&'a mut Structure) -> HandlerResult + 'static,
-	) -> Self {
-		Self::AssociatedFunction {
-			name,
-			generic_parameters,
-			parameters,
-			return_type,
-			handler: Box::new(handler),
+		let first = input.next();
+		if let Some(TokenTree::Ident(ref ident)) = first {
+			if ident == "enum" {
+				let name = parse_name(&mut input);
+				let variants = if let Some(TokenTree::Group(group)) = input.next() {
+					let item = group.stream();
+					let mut input = item.into_iter().peekable();
+					let mut variants: Vec<Variant> = Vec::new();
+					while input.peek().is_some() {
+						let attributes = parse_attributes(&mut input);
+						let name = parse_name(&mut input);
+						let fields = parse_fields(&mut input);
+						variants.push(Variant(Struct {
+							publicity: Publicity::default(),
+							name,
+							fields,
+							attributes,
+						}));
+					}
+					variants
+				} else {
+					panic!();
+				};
+				Ok(Item::Enum(Enum { publicity, name, variants, attributes }))
+			} else if ident == "struct" {
+				let name = parse_name(&mut input);
+				let fields = parse_fields(&mut input);
+				Ok(Item::Struct(Struct { publicity, name, fields, attributes }))
+			} else {
+				panic!("{first:?}");
+			}
+		} else {
+			panic!("{first:?}");
 		}
 	}
 }
 
-/// An [Enum](https://doc.rust-lang.org/rust-by-example/custom_types/enum.html)
-pub struct EnumStructure {
-	name: Ident,
-	attrs: Vec<Attribute>,
-	variants: Vec<EnumVariant>,
-}
+type TokenIterator = std::iter::Peekable<<TokenStream as IntoIterator>::IntoIter>;
 
-impl EnumStructure {
-	pub fn get_variants(&self) -> &[EnumVariant] {
-		&self.variants
-	}
+fn parse_fields(input: &mut TokenIterator) -> Fields {
+	let next = input.next();
+	if let Some(TokenTree::Group(group)) = next {
+		let fields = match group.delimiter() {
+			Delimiter::Parenthesis => {
+				let mut fields = Vec::new();
+				let item = group.stream();
+				let mut input = item.into_iter().peekable();
+				while input.peek().is_some() {
+					let attributes = parse_attributes(&mut input);
+					let publicity = parse_publicity(&mut input);
+					let r#type = parse_type(&mut input);
+					fields.push(Field { attributes, publicity, name: (), r#type });
+					let next = input.next();
+					if let Some(TokenTree::Punct(punct)) = next {
+						assert_eq!(punct.as_char(), ',');
+					} else if next.is_some() {
+						panic!("{next:?}");
+					}
+				}
+				Fields::UnnamedFields(fields)
+			}
+			Delimiter::Brace => {
+				let mut fields = Vec::new();
+				let item = group.stream();
+				let mut input = item.into_iter().peekable();
+				loop {
+					let attributes = parse_attributes(&mut input);
+					let publicity = parse_publicity(&mut input);
+					let Some(name) = input.next() else {
+						break;
+					};
+					let name = if let TokenTree::Ident(ident) = name {
+						ident.to_string()
+					} else {
+						panic!("{name:?}");
+					};
+					let next = input.next();
+					if let Some(TokenTree::Punct(punct)) = next {
+						assert_eq!(punct.as_char(), ':');
+					} else {
+						panic!("{next:?}");
+					}
 
-	pub fn get_variants_mut(&mut self) -> &mut [EnumVariant] {
-		self.variants.as_mut_slice()
-	}
-}
-
-impl HasAttributes for EnumStructure {
-	fn get_attributes(&self) -> &[Attribute] {
-		&self.attrs
-	}
-}
-
-/// A member of an [EnumStructure]
-pub struct EnumVariant {
-	full_path: Path,
-	pub idx: usize,
-	fields: Fields,
-}
-
-/// A [Struct](https://doc.rust-lang.org/rust-by-example/custom_types/structs.html)
-pub struct StructStructure {
-	name: Ident,
-	fields: Fields,
-}
-
-/// A Rust structure which can be *created* (either a struct or enum variant)
-pub trait Constructable {
-	/// Get the path required to construct the expression
-	fn get_constructor_path(&self) -> Path;
-
-	/// Builds a constructor expression by evaluating a expression generator for each field
-	fn build_constructor(
-		&self,
-		generator: impl Fn(NamedOrUnnamedField) -> Result<Expr, Box<dyn Error>>,
-	) -> Result<Expr, Box<dyn std::error::Error>>;
-
-	fn get_fields(&self) -> &Fields;
-	fn get_fields_mut(&mut self) -> &mut Fields;
-}
-
-impl Constructable for StructStructure {
-	fn build_constructor(
-		&self,
-		generator: impl Fn(NamedOrUnnamedField) -> Result<Expr, Box<dyn Error>>,
-	) -> Result<Expr, Box<dyn std::error::Error>> {
-		self.fields.to_constructor(generator, self.name.clone().into())
-	}
-
-	fn get_fields(&self) -> &Fields {
-		&self.fields
-	}
-
-	fn get_fields_mut(&mut self) -> &mut Fields {
-		&mut self.fields
-	}
-
-	fn get_constructor_path(&self) -> Path {
-		self.name.clone().into()
-	}
-}
-
-impl Constructable for EnumVariant {
-	fn build_constructor(
-		&self,
-		generator: impl Fn(NamedOrUnnamedField) -> Result<Expr, Box<dyn Error>>,
-	) -> Result<Expr, Box<dyn std::error::Error>> {
-		self.fields.to_constructor(generator, self.full_path.clone())
-	}
-
-	fn get_fields(&self) -> &Fields {
-		&self.fields
-	}
-
-	fn get_fields_mut(&mut self) -> &mut Fields {
-		&mut self.fields
-	}
-
-	fn get_constructor_path(&self) -> Path {
-		self.full_path.clone()
-	}
-}
-
-pub trait HasAttributes {
-	fn get_attributes(&self) -> &[Attribute];
-}
-
-/// Either a [StructStructure] or [EnumStructure]
-pub enum Structure {
-	Struct(StructStructure),
-	Enum(EnumStructure),
-}
-
-/// Either a [StructStructure] or [EnumVariant] (with it's parents attributes)
-pub enum ConstructableStructure<'a> {
-	Struct(&'a mut StructStructure),
-	EnumVariant(&'a mut EnumVariant, &'a [Attribute]),
-}
-
-impl Structure {
-	/// Iterator over all the fields
-	fn all_fields(&self) -> impl Iterator<Item = NamedOrUnnamedField<'_>> {
-		match self {
-			Structure::Struct(r#struct) => Either2::One(r#struct.get_fields().fields_iterator()),
-			Structure::Enum(r#enum) => Either2::Two(
-				r#enum.variants.iter().flat_map(|variant| variant.get_fields().fields_iterator()),
-			),
+					let r#type = parse_type(&mut input);
+					fields.push(Field { publicity, name, r#type, attributes });
+					let next = input.next();
+					if let Some(TokenTree::Punct(punct)) = next {
+						assert_eq!(punct.as_char(), ',');
+					} else if next.is_some() {
+						panic!("{next:?}");
+					}
+				}
+				Fields::NamedFields(fields)
+			}
+			delimiter => panic!("{delimiter:?}"),
+		};
+		let next = input.next();
+		if let Some(TokenTree::Punct(punct)) = next {
+			assert_eq!(punct.as_char(), ',');
+		} else if next.is_some() {
+			panic!("{next:?}");
 		}
-	}
-
-	/// The top attributes
-	pub fn get_attributes(&self) -> &[Attribute] {
-		match self {
-			// attributes have been moved to fields here
-			Structure::Struct(r#struct) => r#struct.fields.get_field_attributes(),
-			Structure::Enum(r#enum) => r#enum.attrs.as_slice(),
-		}
-	}
-
-	/// The declaration name
-	pub fn get_name(&self) -> &Ident {
-		match self {
-			Structure::Struct(r#struct) => &r#struct.name,
-			Structure::Enum(r#enum) => &r#enum.name,
-		}
+		fields
+	} else if let Some(TokenTree::Punct(punct)) = next {
+		assert_eq!(punct.as_char(), ',');
+		Fields::Unit
+	} else if next.is_none() {
+		Fields::Unit
+	} else {
+		panic!("{next:?}");
 	}
 }
 
-impl Constructable for ConstructableStructure<'_> {
-	fn build_constructor(
-		&self,
-		generator: impl Fn(NamedOrUnnamedField) -> Result<Expr, Box<dyn Error>>,
-	) -> Result<Expr, Box<dyn std::error::Error>> {
-		match self {
-			ConstructableStructure::Struct(r#struct) => r#struct.build_constructor(generator),
-			ConstructableStructure::EnumVariant(enum_variant, _) => {
-				enum_variant.build_constructor(generator)
+fn parse_publicity(input: &mut TokenIterator) -> Publicity {
+	if let Some(token) = input.peek()
+		&& let TokenTree::Ident(ident) = token
+		&& ident == "pub"
+	{
+		let _ = input.next();
+
+		if let Some(TokenTree::Group(group)) = input.peek() {
+			let stream = group.stream();
+			let _ = input.next();
+			Publicity::Public(Some(stream))
+		} else {
+			Publicity::Public(None)
+		}
+	} else {
+		Publicity::Private
+	}
+}
+
+fn parse_name(input: &mut TokenIterator) -> Name {
+	let next = input.next().unwrap();
+	let name = if let TokenTree::Ident(ident) = next {
+		ident.to_string()
+	} else {
+		panic!("{next:?}");
+	};
+	if let Some(TokenTree::Punct(punct)) = input.peek()
+		&& punct.as_char() == '<'
+	{
+		let _ = input.next();
+		let mut generics = TokenStream::new();
+		let mut height = 1;
+		while let Some(token) = input.next() {
+			if let TokenTree::Punct(ref punct) = token {
+				match punct.as_char() {
+					'>' => {
+						height -= 1;
+						if height == 0 {
+							break;
+						}
+					}
+					'<' => {
+						height += 1;
+					}
+					_ => {}
+				}
+			}
+			generics.extend(std::iter::once(token));
+		}
+		Name { name, generics: Some(generics) }
+	} else {
+		Name { name, generics: None }
+	}
+}
+
+fn parse_type(input: &mut TokenIterator) -> Type {
+	let mut height = 0_usize;
+	let mut stream = TokenStream::new();
+	while let Some(token) = input.peek() {
+		if let TokenTree::Punct(punct) = token {
+			match punct.as_char() {
+				'>' => {
+					height = height.saturating_sub(1);
+				}
+				'<' => {
+					height += 1;
+				}
+				',' if height == 0 => {
+					break;
+				}
+				_ => {}
 			}
 		}
+		let token = input.next().unwrap();
+		stream.extend(std::iter::once(token));
 	}
-
-	fn get_fields(&self) -> &Fields {
-		match self {
-			ConstructableStructure::Struct(r#struct) => r#struct.get_fields(),
-			ConstructableStructure::EnumVariant(enum_variant, _) => enum_variant.get_fields(),
-		}
-	}
-
-	fn get_fields_mut(&mut self) -> &mut Fields {
-		match self {
-			ConstructableStructure::Struct(r#struct) => r#struct.get_fields_mut(),
-			ConstructableStructure::EnumVariant(enum_variant, _) => enum_variant.get_fields_mut(),
-		}
-	}
-
-	fn get_constructor_path(&self) -> Path {
-		match self {
-			ConstructableStructure::Struct(r#struct) => r#struct.get_constructor_path(),
-			ConstructableStructure::EnumVariant(enum_variant, _) => {
-				enum_variant.get_constructor_path()
-			}
-		}
-	}
+	Type(stream)
 }
 
-impl<'a> ConstructableStructure<'a> {
-	pub fn as_enum_variant(&'a self) -> Option<&'a EnumVariant> {
-		if let Self::EnumVariant(variant, _) = self { Some(&**variant) } else { None }
-	}
+fn parse_attributes(input: &mut TokenIterator) -> Attributes {
+	let mut attributes = Vec::new();
+	while let Some(TokenTree::Punct(punct)) = input.peek()
+		&& punct.as_char() == '#'
+	{
+		let _ = input.next();
 
-	pub fn all_attributes<'b: 'a>(&'b self) -> impl Iterator<Item = &'b Attribute> + '_ {
-		match self {
-			ConstructableStructure::Struct(r#struct) => {
-				Either2::One(r#struct.get_fields().get_field_attributes().iter())
-			}
-			ConstructableStructure::EnumVariant(r#enum, parent_attrs) => Either2::Two(
-				parent_attrs.iter().chain(r#enum.get_fields().get_field_attributes().iter()),
-			),
-		}
-	}
-}
+		if let Some(TokenTree::Group(group)) = input.next()
+			&& group.delimiter() == Delimiter::Bracket
+		{
+			let mut input = group.stream().into_iter().peekable();
 
-/// Prints a path out as its source representation
-pub fn path_to_string(path: Path) -> String {
-	let mut buf = String::new();
-	if path.leading_colon.is_some() {
-		buf.push_str("::");
-	}
-	for (idx, segment) in path.segments.iter().enumerate() {
-		buf.push_str(&segment.ident.to_string());
-		if !segment.arguments.is_empty() {
-			todo!()
+			let path = {
+				let next = input.next();
+				let mut path = if let Some(TokenTree::Ident(ident)) = next {
+					ident.to_string()
+				} else {
+					panic!();
+				};
+				while let Some(TokenTree::Punct(punct)) = input.peek()
+					&& punct.as_char() == ':'
+				{
+					// ::
+					let _ = (input.next(), input.next());
+					let next = input.next();
+					if let Some(TokenTree::Ident(ident)) = next {
+						use std::fmt::Write;
+
+						let _ = write!(&mut path, "::{ident}");
+					} else {
+						panic!();
+					}
+				}
+				path
+			};
+
+			let value = if let Some(next) = input.next() {
+				match next {
+					TokenTree::Punct(punct) if punct.as_char() == '=' => {
+						let rest: TokenStream = input.collect();
+						Some((true, rest))
+					}
+					TokenTree::Group(group) => Some((false, group.stream())),
+					tt => {
+						panic!("{tt:?}");
+					}
+				}
+			} else {
+				None
+			};
+
+			attributes.push(Attribute { path, value });
+		} else {
+			panic!();
 		}
-		if idx != path.segments.len() - 1 {
-			buf.push_str("::");
-		}
 	}
-	buf
+	attributes
 }

@@ -1,5 +1,5 @@
 [package]
-name = "syn-helpers"
+name = "syraise"
 description = "Framework for building derive macros"
 license = "MIT"
 repository = "https://github.com/kaleidawave/syn-helpers"
@@ -16,8 +16,11 @@ edition = "2024"
 
 [dependencies]
 proc-macro2 = "1.0"
-quote = "1.0"
-syn = { version = "2.0", features = ["full", "visit", "visit-mut"] }
+quote.version = "1.0"
+quote.optional = true
+syn.version = "2.0"
+syn.features = ["full", "visit", "visit-mut"]
+syn.optional = true
 either_n = "0.2"
 
 [workspace.lints.clippy]
@@ -25,5 +28,7 @@ all = "deny"
 pedantic = "deny"
 
 [features]
-syn-extra-traits = ["syn/extra-traits"]
+syn = ["dep:syn"]
+quote = ["dep:quote"]
+syn-extra-traits = ["syn", "syn/extra-traits"]
 field_is_type = ["syn-extra-traits"]

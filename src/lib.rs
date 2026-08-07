@@ -1,4 +1,6 @@
 pub mod emit;
+#[cfg(feature = "emit-string")]
+pub mod emit_string;
 
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 
@@ -86,50 +88,161 @@ impl std::str::FromStr for Item {
 	type Err = proc_macro2::LexError;
 
 	fn from_str(source: &str) -> Result<Self, Self::Err> {
+		match str::parse::<TokenStream>(source) {
+			Ok(stream) => Ok(parse_item(stream).unwrap()),
+			Err(err) => Err(err),
+		}
+	}
+}
+
+pub fn parse_item(stream: TokenStream) -> Result<Item, ()> {
+	let mut input = stream.into_iter().peekable();
+	let attributes = parse_attributes(&mut input);
+	let publicity = parse_publicity(&mut input);
+
+	let first = input.peek();
+	if let Some(TokenTree::Ident(ident)) = first {
+		if ident == "enum" {
+			Ok(Item::Enum(parse_enum(&mut input, Some((attributes, publicity)))))
+		} else if ident == "struct" {
+			Ok(Item::Struct(parse_struct(&mut input, Some((attributes, publicity)))))
+		} else {
+			Err(())
+		}
+	} else {
+		Err(())
+	}
+}
+
+impl std::str::FromStr for Enum {
+	type Err = proc_macro2::LexError;
+
+	fn from_str(source: &str) -> Result<Self, Self::Err> {
 		let input = str::parse::<TokenStream>(source).unwrap();
 		let mut input = input.into_iter().peekable();
+		Ok(parse_enum(&mut input, None))
+	}
+}
 
-		let attributes = parse_attributes(&mut input);
-		let publicity = parse_publicity(&mut input);
+impl std::str::FromStr for Struct {
+	type Err = proc_macro2::LexError;
 
-		let first = input.next();
-		if let Some(TokenTree::Ident(ref ident)) = first {
-			if ident == "enum" {
-				let name = parse_name(&mut input);
-				let variants = if let Some(TokenTree::Group(group)) = input.next() {
-					let item = group.stream();
-					let mut input = item.into_iter().peekable();
-					let mut variants: Vec<Variant> = Vec::new();
-					while input.peek().is_some() {
-						let attributes = parse_attributes(&mut input);
-						let name = parse_name(&mut input);
-						let fields = parse_fields(&mut input);
-						variants.push(Variant(Struct {
-							publicity: Publicity::default(),
-							name,
-							fields,
-							attributes,
-						}));
-					}
-					variants
-				} else {
-					panic!();
-				};
-				Ok(Item::Enum(Enum { publicity, name, variants, attributes }))
-			} else if ident == "struct" {
-				let name = parse_name(&mut input);
-				let fields = parse_fields(&mut input);
-				Ok(Item::Struct(Struct { publicity, name, fields, attributes }))
-			} else {
-				panic!("{first:?}");
-			}
-		} else {
-			panic!("{first:?}");
+	fn from_str(source: &str) -> Result<Self, Self::Err> {
+		let input = str::parse::<TokenStream>(source).unwrap();
+		let mut input = input.into_iter().peekable();
+		Ok(parse_struct(&mut input, None))
+	}
+}
+
+pub enum EitherField<'a> {
+	Unnamed(&'a Field<()>),
+	Named(&'a Field<String>),
+}
+
+impl<'a> EitherField<'a> {
+	pub fn name(&self) -> Option<&str> {
+		match self {
+			EitherField::Unnamed(_field) => None,
+			EitherField::Named(field) => Some(&field.name),
+		}
+	}
+
+	pub fn r#type(&self) -> &Type {
+		match self {
+			EitherField::Unnamed(field) => &field.r#type,
+			EitherField::Named(field) => &field.r#type,
+		}
+	}
+}
+
+pub enum EitherFields<'a> {
+	Unit,
+	Unnamed(&'a [Field<()>]),
+	Named(&'a [Field<String>]),
+}
+
+impl<'a> IntoIterator for EitherFields<'a> {
+	type Item = EitherField<'a>;
+	type IntoIter = EitherFieldsIter<'a>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		match self {
+			EitherFields::Unit => EitherFieldsIter::Unit,
+			EitherFields::Unnamed(field) => EitherFieldsIter::Unnamed(field.iter()),
+			EitherFields::Named(field) => EitherFieldsIter::Named(field.iter()),
+		}
+	}
+}
+
+pub enum EitherFieldsIter<'a> {
+	Unit,
+	Unnamed(std::slice::Iter<'a, Field<()>>),
+	Named(std::slice::Iter<'a, Field<String>>),
+}
+
+impl<'a> Iterator for EitherFieldsIter<'a> {
+	type Item = EitherField<'a>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		match self {
+			EitherFieldsIter::Unit => None,
+			EitherFieldsIter::Unnamed(iter) => iter.next().map(EitherField::Unnamed),
+			EitherFieldsIter::Named(iter) => iter.next().map(EitherField::Named),
 		}
 	}
 }
 
 type TokenIterator = std::iter::Peekable<<TokenStream as IntoIterator>::IntoIter>;
+
+type ParentDecorators = (Attributes, Publicity);
+
+fn parse_enum(input: &mut TokenIterator, parent: Option<ParentDecorators>) -> Enum {
+	let (attributes, publicity): ParentDecorators = if let Some(parent) = parent {
+		let _ = input.next();
+		parent
+	} else {
+		let attributes = parse_attributes(input);
+		let publicity = parse_publicity(input);
+		let _ = input.next(); // TODO assert is
+		(attributes, publicity)
+	};
+	let name = parse_name(input);
+	let variants = if let Some(TokenTree::Group(group)) = input.next() {
+		let item = group.stream();
+		let mut input = item.into_iter().peekable();
+		let mut variants: Vec<Variant> = Vec::new();
+		while input.peek().is_some() {
+			let attributes = parse_attributes(&mut input);
+			let name = parse_name(&mut input);
+			let fields = parse_fields(&mut input);
+			variants.push(Variant(Struct {
+				publicity: Publicity::default(),
+				name,
+				fields,
+				attributes,
+			}));
+		}
+		variants
+	} else {
+		panic!();
+	};
+	Enum { publicity, name, variants, attributes }
+}
+
+fn parse_struct(input: &mut TokenIterator, parent: Option<ParentDecorators>) -> Struct {
+	let (attributes, publicity): ParentDecorators = if let Some(parent) = parent {
+		let _ = input.next();
+		parent
+	} else {
+		let attributes = parse_attributes(input);
+		let publicity = parse_publicity(input);
+		let _ = input.next(); // TODO assert is
+		(attributes, publicity)
+	};
+	let name = parse_name(input);
+	let fields = parse_fields(input);
+	Struct { publicity, name, fields, attributes }
+}
 
 fn parse_fields(input: &mut TokenIterator) -> Fields {
 	let next = input.next();
@@ -341,4 +454,20 @@ fn parse_attributes(input: &mut TokenIterator) -> Attributes {
 		}
 	}
 	attributes
+}
+
+/// TODO should this accept Item (not function) or TokenStream
+pub fn map_fields(
+	_item: Item,
+	_cb: impl for<'a> FnMut(EitherField<'a>) -> TokenStream,
+) -> TokenStream {
+	todo!();
+}
+
+/// TODO should this accept Item (not function) or TokenStream
+pub fn iter_fields(
+	_item: Item,
+	_cb: impl for<'a> FnMut(EitherField<'a>) -> TokenStream,
+) -> TokenStream {
+	todo!();
 }

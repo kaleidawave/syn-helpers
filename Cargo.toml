@@ -2,9 +2,9 @@
 name = "syraise"
 description = "Framework for building derive macros"
 license = "MIT"
-repository = "https://github.com/kaleidawave/syn-helpers"
+repository = "https://github.com/kaleidawave/syraise"
 authors = ["Ben <kaleidawave@gmail.com>"]
-keywords = ["proc-macro-derive", "syn", "code-generation", "enum"]
+keywords = ["proc-macro-derive", "code-generation", "enum"]
 categories = [
     "development-tools::procedural-macro-helpers",
     "development-tools::build-utils",
@@ -21,14 +21,13 @@ quote.optional = true
 syn.version = "2.0"
 syn.features = ["full", "visit", "visit-mut"]
 syn.optional = true
-either_n = "0.2"
 
 [workspace.lints.clippy]
 all = "deny"
 pedantic = "deny"
 
 [features]
+emit-string = []
 syn = ["dep:syn"]
 quote = ["dep:quote"]
 syn-extra-traits = ["syn", "syn/extra-traits"]
-field_is_type = ["syn-extra-traits"]

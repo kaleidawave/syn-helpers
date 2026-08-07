@@ -1,13 +1,25 @@
-// TODO CFG for each
-use crate::{Enum, Fields};
+use crate::{EitherField, Enum, Fields};
 
-pub fn enum_to_match_tokens(r#enum: Enum) -> proc_macro2::TokenStream {
-	use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 
-	fn i(name: &str) -> TokenTree {
-		TokenTree::Ident(Ident::new(name, Span::call_site()))
-	}
+fn i(name: &str) -> TokenTree {
+	TokenTree::Ident(Ident::new(name, Span::call_site()))
+}
 
+fn attr(on: &mut TokenStream, name: &str, inner: TokenStream) {
+	on.extend([
+		TokenTree::Punct(Punct::new('#', Spacing::Alone)),
+		TokenTree::Group(Group::new(
+			Delimiter::Bracket,
+			TokenStream::from_iter([
+				i(name),
+				TokenTree::Group(Group::new(Delimiter::Parenthesis, inner)),
+			]),
+		)),
+	]);
+}
+
+pub fn enum_to_match(r#enum: Enum) -> TokenStream {
 	let mut group = TokenStream::new();
 	let mut seen = true;
 	for variant in r#enum.variants {
@@ -17,19 +29,7 @@ pub fn enum_to_match_tokens(r#enum: Enum) -> proc_macro2::TokenStream {
 
 		for attribute in variant.0.attributes {
 			if attribute.name_eq("cfg") {
-				group.extend([
-					TokenTree::Punct(Punct::new('#', Spacing::Alone)),
-					TokenTree::Group(Group::new(
-						Delimiter::Bracket,
-						TokenStream::from_iter([
-							i("cfg"),
-							TokenTree::Group(Group::new(
-								Delimiter::Parenthesis,
-								attribute.value.as_ref().unwrap().1.clone(),
-							)),
-						]),
-					)),
-				]);
+				attr(&mut group, "cfg", attribute.value.as_ref().unwrap().1.clone());
 			}
 		}
 
@@ -61,19 +61,7 @@ pub fn enum_to_match_tokens(r#enum: Enum) -> proc_macro2::TokenStream {
 					}
 					for attribute in &field.attributes {
 						if attribute.name_eq("cfg") {
-							group.extend([
-								TokenTree::Punct(Punct::new('#', Spacing::Alone)),
-								TokenTree::Group(Group::new(
-									Delimiter::Bracket,
-									TokenStream::from_iter([
-										i("cfg"),
-										TokenTree::Group(Group::new(
-											Delimiter::Parenthesis,
-											attribute.value.as_ref().unwrap().1.clone(),
-										)),
-									]),
-								)),
-							]);
+							attr(&mut group, "cfg", attribute.value.as_ref().unwrap().1.clone());
 						}
 					}
 					inner.extend([i(&field.name)]);
@@ -85,6 +73,9 @@ pub fn enum_to_match_tokens(r#enum: Enum) -> proc_macro2::TokenStream {
 		group.extend([
 			TokenTree::Punct(Punct::new('=', Spacing::Joint)),
 			TokenTree::Punct(Punct::new('>', Spacing::Alone)),
+		]);
+
+		group.extend([
 			i("todo"),
 			TokenTree::Punct(Punct::new('!', Spacing::Joint)),
 			TokenTree::Group(Group::new(Delimiter::Parenthesis, TokenStream::new())),
@@ -95,113 +86,69 @@ pub fn enum_to_match_tokens(r#enum: Enum) -> proc_macro2::TokenStream {
 	TokenStream::from_iter([i("match"), i("value"), group])
 }
 
-pub fn enum_to_match_string(r#enum: Enum) -> String {
-	use std::fmt::Write;
-
-	let mut buf = "match value {\n".to_owned();
-	for (idx, variant) in r#enum.variants.iter().enumerate() {
-		for attribute in &variant.0.attributes {
-			if attribute.name_eq("cfg") {
-				let _ = writeln!(
-					&mut buf,
-					"\t#[cfg({stream})]",
-					stream = attribute.value.as_ref().unwrap().1
-				);
-			}
+pub fn fields_to_constructor<F: for<'a> FnMut(EitherField<'_>, &'a mut TokenStream)>(
+	path: Vec<String>,
+	fields: Fields,
+	mut field_cb: F,
+) -> TokenStream {
+	map_fields(path, fields, |field, stream| {
+		if let Some(name) = field.name() {
+			stream.extend([i(name), TokenTree::Punct(Punct::new(':', Spacing::Alone))]);
 		}
+		field_cb(field, stream);
+	})
+}
 
-		write!(
-			&mut buf,
-			"\t{enum_name}::{variant_name}",
-			enum_name = r#enum.name.name,
-			variant_name = variant.0.name.name
-		)
-		.unwrap();
-		match &variant.0.fields {
-			Fields::Unit => {}
-			Fields::UnnamedFields(fields) => {
-				let _ = write!(&mut buf, "(");
-				for idx in 0..fields.len() {
-					// TODO cfg?
+fn map_fields<F: for<'a> FnMut(EitherField<'_>, &'a mut TokenStream)>(
+	path: Vec<String>,
+	fields: Fields,
+	mut field_cb: F,
+) -> TokenStream {
+	let mut path_iter = path.into_iter();
+	let mut stream = TokenStream::new();
+	let ident = Ident::new(&path_iter.next().expect("no path"), Span::call_site());
+	stream.extend(std::iter::once(ident));
+	for part in path_iter {
+		stream.extend([Punct::new(':', Spacing::Joint), Punct::new(':', Spacing::Alone)]);
+		let ident = Ident::new(&part, Span::call_site());
+		stream.extend(std::iter::once(ident));
+	}
+	match fields {
+		Fields::Unit => {}
+		Fields::UnnamedFields(fields) => {
+			let mut inner = TokenStream::new();
+			for (idx, field) in fields.iter().enumerate() {
+				if idx > 0 {
+					let punct = Punct::new(',', Spacing::Alone);
+					stream.extend(std::iter::once(punct));
+				}
 
-					// TODO could be a better name
-					if idx > 0 {
-						let _ = write!(&mut buf, ", _field{idx}");
-					} else {
-						let _ = write!(&mut buf, "_field{idx}");
+				for attribute in &field.attributes {
+					if attribute.name_eq("cfg") {
+						attr(&mut inner, "cfg", attribute.value.as_ref().unwrap().1.clone());
 					}
 				}
-				let _ = write!(&mut buf, ")");
+				field_cb(EitherField::Unnamed(field), &mut stream);
 			}
-			Fields::NamedFields(fields) => {
-				let _ = write!(&mut buf, " {{ ");
-				for (idx, field) in fields.iter().enumerate() {
-					if idx > 0 {
-						let _ = write!(&mut buf, ", ");
-					}
-
-					for attribute in &field.attributes {
-						if attribute.name_eq("cfg") {
-							let _ = write!(
-								&mut buf,
-								"#[cfg({stream})] ",
-								stream = attribute.value.as_ref().unwrap().1
-							);
-						}
-					}
-
-					let _ = write!(&mut buf, "{name}", name = &field.name);
-				}
-				let _ = write!(&mut buf, " }}");
-			}
+			stream.extend(std::iter::once(Group::new(Delimiter::Parenthesis, inner)));
 		}
+		Fields::NamedFields(fields) => {
+			let mut inner = TokenStream::new();
+			for (idx, field) in fields.iter().enumerate() {
+				if idx > 0 {
+					let punct = Punct::new(',', Spacing::Alone);
+					stream.extend(std::iter::once(punct));
+				}
 
-		let end = if idx + 1 == r#enum.variants.len() { "" } else { "," };
-
-		let _ = writeln!(&mut buf, " => todo!(){end}");
+				for attribute in &field.attributes {
+					if attribute.name_eq("cfg") {
+						attr(&mut inner, "cfg", attribute.value.as_ref().unwrap().1.clone());
+					}
+				}
+				field_cb(EitherField::Named(field), &mut stream);
+			}
+			stream.extend(std::iter::once(Group::new(Delimiter::Bracket, inner)));
+		}
 	}
-	let _ = write!(&mut buf, "}}");
-	buf
-}
-
-#[cfg(test)]
-mod tests {
-	#[test]
-	fn to_enum() {
-		let item = str::parse::<crate::Item>("enum X { A, B, C }");
-		let Ok(crate::Item::Enum(r#enum)) = item else {
-			panic!("{item:?}");
-		};
-		let out = super::enum_to_match_string(r#enum);
-		let expected = "
-match value {
-	X::A => todo!(),
-	X::B => todo!(),
-	X::C => todo!()
-}
-		"
-		.trim();
-		assert_eq!(&out, expected);
-	}
-
-	#[test]
-	fn to_enum_cfg() {
-		let item = str::parse::<crate::Item>(
-			"enum X { #[cfg(windows)] Windows, B(usize), C { #[cfg(feature=\"x\")] a: Vec<String>, b: String } }",
-		);
-		let Ok(crate::Item::Enum(r#enum)) = item else {
-			panic!("{item:?}");
-		};
-		let out = super::enum_to_match_string(r#enum);
-		let expected = "
-match value {
-	#[cfg(windows)]
-	X::Windows => todo!(),
-	X::B(_field0) => todo!(),
-	X::C { #[cfg(feature = \"x\")] a, b } => todo!()
-}
-		"
-		.trim();
-		assert_eq!(&out, expected);
-	}
+	stream
 }

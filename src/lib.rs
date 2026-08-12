@@ -36,6 +36,12 @@ pub enum Publicity {
 #[derive(Debug)]
 pub struct Type(pub TokenStream);
 
+impl Type {
+	pub fn to_string(&self) -> String {
+		self.0.to_string()
+	}
+}
+
 #[derive(Debug)]
 pub struct Variant(pub Struct);
 
@@ -215,6 +221,14 @@ fn parse_enum(input: &mut TokenIterator, parent: Option<ParentDecorators>) -> En
 			let attributes = parse_attributes(&mut input);
 			let name = parse_name(&mut input);
 			let fields = parse_fields(&mut input);
+			if !matches!(fields, Fields::Unit) {
+				let next = input.next();
+				if let Some(TokenTree::Punct(punct)) = next {
+					assert_eq!(punct.as_char(), ',');
+				} else if next.is_some() {
+					panic!("{next:?}");
+				}
+			}
 			variants.push(Variant(Struct {
 				publicity: Publicity::default(),
 				name,
@@ -301,15 +315,10 @@ fn parse_fields(input: &mut TokenIterator) -> Fields {
 			}
 			delimiter => panic!("{delimiter:?}"),
 		};
-		let next = input.next();
-		if let Some(TokenTree::Punct(punct)) = next {
-			assert_eq!(punct.as_char(), ',');
-		} else if next.is_some() {
-			panic!("{next:?}");
-		}
 		fields
 	} else if let Some(TokenTree::Punct(punct)) = next {
-		assert_eq!(punct.as_char(), ',');
+		// ; is for struct. and , is for enum
+		std::assert_matches!(punct.as_char(), ',' | ';');
 		Fields::Unit
 	} else if next.is_none() {
 		Fields::Unit

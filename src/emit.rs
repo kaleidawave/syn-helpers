@@ -6,6 +6,17 @@ fn i(name: &str) -> TokenTree {
 	TokenTree::Ident(Ident::new(name, Span::call_site()))
 }
 
+pub fn compile_error(message: &str) -> TokenStream {
+	let inner = TokenStream::from_iter([TokenTree::Literal(str::parse(message).unwrap())]);
+	let inner = TokenTree::Group(Group::new(Delimiter::Parenthesis, inner));
+	let inner = TokenStream::from_iter([i("compile_error"), inner]);
+	let inner = Group::new(Delimiter::Bracket, inner);
+	TokenStream::from_iter([
+		TokenTree::Punct(Punct::new('#', Spacing::Alone)),
+		TokenTree::Group(inner),
+	])
+}
+
 fn attr(on: &mut TokenStream, name: &str, inner: TokenStream) {
 	on.extend([
 		TokenTree::Punct(Punct::new('#', Spacing::Alone)),

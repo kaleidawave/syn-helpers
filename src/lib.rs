@@ -2,12 +2,64 @@ pub mod emit;
 #[cfg(feature = "emit-string")]
 pub mod emit_string;
 
-use proc_macro2::{Delimiter, TokenStream, TokenTree};
+pub use proc_macro2::{Delimiter, TokenStream, TokenTree};
+
+#[derive(Debug)]
+pub enum Generics {
+	Unprocessed(TokenStream),
+	Processed(Vec<(String, Constraint)>)
+}
+
+impl Generics {
+	pub fn names_and_constraints(&mut self) -> &mut [(String, Constraint)] {
+		fn parse(stream: TokenStream) -> Vec<(String, Constraint)> {
+			let mut inner = stream.into_iter();
+			let mut vec = Vec::new();
+			while let Some(initial) = inner.next() {
+				let proc_macro2::TokenTree::Ident(initial) = initial else {
+					panic!();
+				};
+				let initial = initial.to_string();
+				let mut constraint = TokenStream::new();
+				if let Some(proc_macro2::TokenTree::Punct(punct)) = inner.next() {
+					if punct.as_char() == ':' {
+						let mut depth: u8 = 0;
+						while let Some(token) = inner.next() {
+							if let proc_macro2::TokenTree::Punct(ref punct) = token {
+								depth = match punct.as_char() {
+									'<' => depth + 1,
+									'>' => depth.saturating_sub(1),
+									',' if depth == 0 => {
+										break;
+									},
+									_ => depth
+								};
+							}
+							constraint.extend(std::iter::once(token));
+						}
+					} else {
+						assert_eq!(punct.as_char(), ',');
+					}
+				}
+				vec.push((initial, Constraint(constraint)));
+			}
+			vec
+		}
+
+		if let Generics::Unprocessed(stream) = self {
+			*self = Generics::Processed(parse(std::mem::take(stream)));
+		}
+		match *self {
+			Generics::Unprocessed(_) => unreachable!(),
+			Generics::Processed(ref mut owned) => owned
+		}
+	}
+}
 
 #[derive(Debug)]
 pub struct Name {
 	pub name: String,
-	pub generics: Option<TokenStream>,
+	pub generics: Option<Generics>,
 }
 
 /// Anything that can have a `derive` on it
@@ -33,14 +85,67 @@ pub enum Publicity {
 	Public(Option<TokenStream>),
 }
 
+impl Publicity {
+	pub fn to_tokens(&self) -> TokenStream {
+		match self {
+			Self::Public(Some(_stream)) => todo!(),
+			Self::Public(None) => todo!(),
+			Self::Private => TokenStream::new()
+		}
+	}
+
+	pub fn to_string(&self) -> String {
+		match self {
+			Self::Public(Some(stream)) => format!("pub({stream}) "),
+			Self::Public(None) => "pub ".to_owned(),
+			Self::Private => String::new()
+		}
+	}
+}
+
 #[derive(Debug)]
 pub struct Type(pub TokenStream);
 
 impl Type {
+	pub fn to_tokens(&self) -> TokenStream {
+		self.0.clone()
+	}
+
 	pub fn to_string(&self) -> String {
 		self.0.to_string()
 	}
 }
+
+pub fn add_constraint<N>(field: &Field<N>, _constraint: &str, generics: &mut Generics) {
+	fn matches(token: &TokenTree, m: &[(String, Constraint)], f: &mut u32) {
+		if let TokenTree::Ident(ident) = token {
+			let name = ident.to_string();
+			if let Some(position) = m.iter().position(|(name1, _)| name == *name1) {
+				*f |= 0b1 << position;
+			}
+		}
+		// TODO group etc
+	}
+
+	let generics = generics.names_and_constraints();
+	if generics.is_empty() {
+		return;
+	}
+	let mut f: u32 = 0;
+	for token in field.r#type.0.clone() {
+		matches(&token, generics, &mut f);
+	}
+	for (position, (_, _constraints)) in generics.iter().enumerate() {
+		if f & (0b1 << position) != 0 {
+			// TODO and not already constrained
+			// constraints.push("+")
+			// constraints.push(constraint)
+		}
+	}
+}
+
+#[derive(Debug)]
+pub struct Constraint(pub TokenStream);
 
 #[derive(Debug)]
 pub struct Variant(pub Struct);
@@ -56,8 +161,8 @@ pub struct Struct {
 #[derive(Debug)]
 pub enum Fields {
 	Unit,
-	UnnamedFields(Vec<Field<()>>),
-	NamedFields(Vec<Field<String>>),
+	Unnamed(Vec<Field<()>>),
+	Named(Vec<Field<String>>),
 }
 
 #[derive(Debug)]
@@ -161,39 +266,50 @@ impl<'a> EitherField<'a> {
 	}
 }
 
-pub enum EitherFields<'a> {
+#[derive(Clone, Copy, Debug)]
+pub enum FieldsRef<'a> {
 	Unit,
 	Unnamed(&'a [Field<()>]),
 	Named(&'a [Field<String>]),
 }
 
-impl<'a> IntoIterator for EitherFields<'a> {
-	type Item = EitherField<'a>;
-	type IntoIter = EitherFieldsIter<'a>;
-
-	fn into_iter(self) -> Self::IntoIter {
-		match self {
-			EitherFields::Unit => EitherFieldsIter::Unit,
-			EitherFields::Unnamed(field) => EitherFieldsIter::Unnamed(field.iter()),
-			EitherFields::Named(field) => EitherFieldsIter::Named(field.iter()),
+impl<'a> From<&'a Fields> for FieldsRef<'a> {
+	fn from(fields: &'a Fields) -> Self {
+		match fields {
+			Fields::Unit => FieldsRef::Unit,
+			Fields::Unnamed(fields) => FieldsRef::Unnamed(fields),
+			Fields::Named(fields) => FieldsRef::Named(fields),
 		}
 	}
 }
 
-pub enum EitherFieldsIter<'a> {
+impl<'a> IntoIterator for FieldsRef<'a> {
+	type Item = EitherField<'a>;
+	type IntoIter = FieldsRefIter<'a>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		match self {
+			FieldsRef::Unit => FieldsRefIter::Unit,
+			FieldsRef::Unnamed(field) => FieldsRefIter::Unnamed(field.iter()),
+			FieldsRef::Named(field) => FieldsRefIter::Named(field.iter()),
+		}
+	}
+}
+
+pub enum FieldsRefIter<'a> {
 	Unit,
 	Unnamed(std::slice::Iter<'a, Field<()>>),
 	Named(std::slice::Iter<'a, Field<String>>),
 }
 
-impl<'a> Iterator for EitherFieldsIter<'a> {
+impl<'a> Iterator for FieldsRefIter<'a> {
 	type Item = EitherField<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
 		match self {
-			EitherFieldsIter::Unit => None,
-			EitherFieldsIter::Unnamed(iter) => iter.next().map(EitherField::Unnamed),
-			EitherFieldsIter::Named(iter) => iter.next().map(EitherField::Named),
+			FieldsRefIter::Unit => None,
+			FieldsRefIter::Unnamed(iter) => iter.next().map(EitherField::Unnamed),
+			FieldsRefIter::Named(iter) => iter.next().map(EitherField::Named),
 		}
 	}
 }
@@ -278,7 +394,7 @@ fn parse_fields(input: &mut TokenIterator) -> Fields {
 						panic!("{next:?}");
 					}
 				}
-				Fields::UnnamedFields(fields)
+				Fields::Unnamed(fields)
 			}
 			Delimiter::Brace => {
 				let mut fields = Vec::new();
@@ -311,7 +427,7 @@ fn parse_fields(input: &mut TokenIterator) -> Fields {
 						panic!("{next:?}");
 					}
 				}
-				Fields::NamedFields(fields)
+				Fields::Named(fields)
 			}
 			delimiter => panic!("{delimiter:?}"),
 		};
@@ -376,7 +492,7 @@ fn parse_name(input: &mut TokenIterator) -> Name {
 			}
 			generics.extend(std::iter::once(token));
 		}
-		Name { name, generics: Some(generics) }
+		Name { name, generics: Some(Generics::Unprocessed(generics)) }
 	} else {
 		Name { name, generics: None }
 	}
@@ -479,4 +595,42 @@ pub fn iter_fields(
 	_cb: impl for<'a> FnMut(EitherField<'a>) -> TokenStream,
 ) -> TokenStream {
 	todo!();
+}
+
+/// TODO attributes
+#[derive(Debug)]
+pub enum Structure<'a> {
+	Single {
+		name: &'a str,
+		attributes: &'a [Attribute],
+		fields: FieldsRef<'a>
+	},
+	Parent {
+		parent: &'a str,
+		name: &'a str,
+		attributes: (&'a [Attribute], &'a [Attribute]),
+		fields: FieldsRef<'a>
+	}
+}
+
+impl<'a> Structure<'a> {
+	// TODO cfg emit_string
+	pub fn full_name(&self) -> String {
+		match self {
+			Self::Single { name, .. } => name.to_owned().to_string(),
+			Self::Parent { parent, name, .. } => format!("{parent}::{name}")
+		}
+	}
+
+	pub fn name(&self) -> String {
+		match self {
+			Self::Single { name, .. } | Self::Parent { name, .. } => name.to_owned().to_string(),
+		}
+	}
+
+	pub fn fields(&self) -> FieldsRef<'a> {
+		match self {
+			Structure::Single { fields, .. } | Structure::Parent { fields, .. } => *fields
+		}
+	}
 }

@@ -1,13 +1,16 @@
-use crate::{EitherField, EitherFields, Enum, Fields};
+use crate::{EitherField, FieldsRef, Fields, Enum};
 
-pub fn enum_to_match<F: for<'a> FnMut(EitherFields<'a>, &'a mut String)>(
+pub fn enum_to_match<F: for<'a> FnMut(FieldsRef<'a>, &'a mut String)>(
 	r#enum: Enum,
 	mut cb: F,
 ) -> String {
 	use std::fmt::Write;
 
 	let mut buf = "match value {\n".to_owned();
-	for (idx, variant) in r#enum.variants.iter().enumerate() {
+
+	let num_variants = r#enum.variants.len();
+
+	for (idx, variant) in r#enum.variants.into_iter().enumerate() {
 		for attribute in &variant.0.attributes {
 			if attribute.name_eq("cfg") {
 				let _ = writeln!(
@@ -28,9 +31,9 @@ pub fn enum_to_match<F: for<'a> FnMut(EitherFields<'a>, &'a mut String)>(
 		match &variant.0.fields {
 			Fields::Unit => {
 				buf.push_str(" => ");
-				(cb)(EitherFields::Unit, &mut buf);
+				(cb)(FieldsRef::from(&variant.0.fields), &mut buf);
 			}
-			Fields::UnnamedFields(fields) => {
+			Fields::Unnamed(fields) => {
 				let _ = write!(&mut buf, "(");
 				for idx in 0..fields.len() {
 					// TODO cfg?
@@ -43,9 +46,9 @@ pub fn enum_to_match<F: for<'a> FnMut(EitherFields<'a>, &'a mut String)>(
 					}
 				}
 				let _ = write!(&mut buf, ") => ");
-				(cb)(EitherFields::Unnamed(fields), &mut buf);
+				(cb)(FieldsRef::from(&variant.0.fields), &mut buf);
 			}
-			Fields::NamedFields(fields) => {
+			Fields::Named(fields) => {
 				let _ = write!(&mut buf, " {{ ");
 				for (idx, field) in fields.iter().enumerate() {
 					if idx > 0 {
@@ -65,11 +68,11 @@ pub fn enum_to_match<F: for<'a> FnMut(EitherFields<'a>, &'a mut String)>(
 					let _ = write!(&mut buf, "{name}", name = &field.name);
 				}
 				let _ = write!(&mut buf, " }} => ");
-				(cb)(EitherFields::Named(fields), &mut buf);
+				(cb)(FieldsRef::from(&variant.0.fields), &mut buf);
 			}
 		}
 
-		if idx + 1 != r#enum.variants.len() && !buf.ends_with("}") {
+		if idx + 1 != num_variants && !buf.ends_with("}") {
 			buf.push(',');
 		}
 		let _ = writeln!(&mut buf);
@@ -120,7 +123,7 @@ fn map_fields<F: for<'a> FnMut(EitherField<'_>, &'a mut String)>(
 	}
 	match fields {
 		Fields::Unit => {}
-		Fields::UnnamedFields(fields) => {
+		Fields::Unnamed(fields) => {
 			buf.push('(');
 			for (idx, field) in fields.iter().enumerate() {
 				if idx > 0 {
@@ -140,7 +143,7 @@ fn map_fields<F: for<'a> FnMut(EitherField<'_>, &'a mut String)>(
 			}
 			buf.push(')');
 		}
-		Fields::NamedFields(fields) => {
+		Fields::Named(fields) => {
 			buf.push_str(" {\n");
 			for (idx, field) in fields.iter().enumerate() {
 				if idx > 0 {

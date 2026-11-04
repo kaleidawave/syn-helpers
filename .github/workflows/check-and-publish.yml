@@ -1,0 +1,58 @@
+name: Check library and publish if `main`
+
+on: [push]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Check
+      run: cargo check
+
+    - name: Test
+      run: cargo test
+
+    - name: Lint
+      run: cargo clippy
+
+    - name: Format
+      run: cargo fmt
+
+  publish:
+    if: ${{ github.ref == 'refs/heads/main' }}
+
+    concurrency: release-crate
+    runs-on: ubuntu-latest
+    needs: check
+    permissions: write-all
+
+    steps:
+      - id: checkout
+        uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: ${{ !env.existing_token }}
+        env:
+          existing_token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - uses: kaleidawave/crates-release-gh-action@improvements
+        id: update-version
+        with:
+          crates-token: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+          version: ${{ secrets.NEXT_VERSION || 'patch' }}
+
+      - name: Push updated Cargo.toml
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "Release: ${{ steps.update-version.outputs.new-versions-description }}"
+          git push origin ${{ steps.checkout.outputs.ref }}

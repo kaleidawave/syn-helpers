@@ -7,7 +7,7 @@ pub use proc_macro2::{Delimiter, TokenStream, TokenTree};
 #[derive(Debug)]
 pub enum Generics {
 	Unprocessed(TokenStream),
-	Processed(Vec<(String, Constraint)>)
+	Processed(Vec<(String, Constraint)>),
 }
 
 impl Generics {
@@ -24,15 +24,15 @@ impl Generics {
 				if let Some(proc_macro2::TokenTree::Punct(punct)) = inner.next() {
 					if punct.as_char() == ':' {
 						let mut depth: u8 = 0;
-						while let Some(token) = inner.next() {
+						for token in inner.by_ref() {
 							if let proc_macro2::TokenTree::Punct(ref punct) = token {
 								depth = match punct.as_char() {
 									'<' => depth + 1,
 									'>' => depth.saturating_sub(1),
 									',' if depth == 0 => {
 										break;
-									},
-									_ => depth
+									}
+									_ => depth,
 								};
 							}
 							constraint.extend(std::iter::once(token));
@@ -51,7 +51,7 @@ impl Generics {
 		}
 		match *self {
 			Generics::Unprocessed(_) => unreachable!(),
-			Generics::Processed(ref mut owned) => owned
+			Generics::Processed(ref mut owned) => owned,
 		}
 	}
 }
@@ -90,7 +90,7 @@ impl Publicity {
 		match self {
 			Self::Public(Some(_stream)) => todo!(),
 			Self::Public(None) => todo!(),
-			Self::Private => TokenStream::new()
+			Self::Private => TokenStream::new(),
 		}
 	}
 
@@ -98,7 +98,7 @@ impl Publicity {
 		match self {
 			Self::Public(Some(stream)) => format!("pub({stream}) "),
 			Self::Public(None) => "pub ".to_owned(),
-			Self::Private => String::new()
+			Self::Private => String::new(),
 		}
 	}
 }
@@ -377,7 +377,7 @@ fn parse_struct(input: &mut TokenIterator, parent: Option<ParentDecorators>) -> 
 fn parse_fields(input: &mut TokenIterator) -> Fields {
 	let next = input.next();
 	if let Some(TokenTree::Group(group)) = next {
-		let fields = match group.delimiter() {
+		match group.delimiter() {
 			Delimiter::Parenthesis => {
 				let mut fields = Vec::new();
 				let item = group.stream();
@@ -430,8 +430,7 @@ fn parse_fields(input: &mut TokenIterator) -> Fields {
 				Fields::Named(fields)
 			}
 			delimiter => panic!("{delimiter:?}"),
-		};
-		fields
+		}
 	} else if let Some(TokenTree::Punct(punct)) = next {
 		// ; is for struct. and , is for enum
 		std::assert_matches!(punct.as_char(), ',' | ';');
@@ -475,7 +474,7 @@ fn parse_name(input: &mut TokenIterator) -> Name {
 		let _ = input.next();
 		let mut generics = TokenStream::new();
 		let mut height = 1;
-		while let Some(token) = input.next() {
+		for token in input.by_ref() {
 			if let TokenTree::Punct(ref punct) = token {
 				match punct.as_char() {
 					'>' => {
@@ -581,36 +580,20 @@ fn parse_attributes(input: &mut TokenIterator) -> Attributes {
 	attributes
 }
 
-/// TODO should this accept Item (not function) or TokenStream
-pub fn map_fields(
-	_item: Item,
-	_cb: impl for<'a> FnMut(EitherField<'a>) -> TokenStream,
-) -> TokenStream {
-	todo!();
-}
-
-/// TODO should this accept Item (not function) or TokenStream
-pub fn iter_fields(
-	_item: Item,
-	_cb: impl for<'a> FnMut(EitherField<'a>) -> TokenStream,
-) -> TokenStream {
-	todo!();
-}
-
 /// TODO attributes
 #[derive(Debug)]
 pub enum Structure<'a> {
 	Single {
 		name: &'a str,
 		attributes: &'a [Attribute],
-		fields: FieldsRef<'a>
+		fields: FieldsRef<'a>,
 	},
 	Parent {
 		parent: &'a str,
 		name: &'a str,
 		attributes: (&'a [Attribute], &'a [Attribute]),
-		fields: FieldsRef<'a>
-	}
+		fields: FieldsRef<'a>,
+	},
 }
 
 impl<'a> Structure<'a> {
@@ -618,7 +601,7 @@ impl<'a> Structure<'a> {
 	pub fn full_name(&self) -> String {
 		match self {
 			Self::Single { name, .. } => name.to_owned().to_string(),
-			Self::Parent { parent, name, .. } => format!("{parent}::{name}")
+			Self::Parent { parent, name, .. } => format!("{parent}::{name}"),
 		}
 	}
 
@@ -630,7 +613,7 @@ impl<'a> Structure<'a> {
 
 	pub fn fields(&self) -> FieldsRef<'a> {
 		match self {
-			Structure::Single { fields, .. } | Structure::Parent { fields, .. } => *fields
+			Structure::Single { fields, .. } | Structure::Parent { fields, .. } => *fields,
 		}
 	}
 }

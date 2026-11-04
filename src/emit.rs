@@ -1,4 +1,4 @@
-use crate::{EitherField, Enum, Fields, FieldsRef, Structure, Item};
+use crate::{EitherField, Enum, Fields, FieldsRef, Item, Structure};
 
 use proc_macro2::{Delimiter, Group, Ident, Punct, Spacing, Span, TokenStream, TokenTree};
 
@@ -11,18 +11,20 @@ pub fn iter_self(
 	mut cb: impl for<'a> FnMut(Structure<'a>) -> TokenStream,
 ) -> TokenStream {
 	match item {
-		Item::Enum(r#enum) => {
-			enum_to_match(&r#enum, "self", cb)
-		}
+		Item::Enum(r#enum) => enum_to_match(r#enum, "self", cb),
 		Item::Struct(r#struct) => {
-			let structure = Structure::Single { name: &r#struct.name.name, fields: FieldsRef::from(&r#struct.fields), attributes: &r#struct.attributes };
+			let structure = Structure::Single {
+				name: &r#struct.name.name,
+				fields: FieldsRef::from(&r#struct.fields),
+				attributes: &r#struct.attributes,
+			};
 			let mut inner = TokenStream::new();
 			inner.extend(std::iter::once(i("let")));
 			emit_destructor(&structure, &mut inner);
 			inner.extend([
 				TokenTree::Punct(Punct::new('=', Spacing::Alone)),
 				i("self"),
-				TokenTree::Punct(Punct::new(';', Spacing::Alone))
+				TokenTree::Punct(Punct::new(';', Spacing::Alone)),
 			]);
 			inner.extend(cb(structure));
 			inner
@@ -60,19 +62,10 @@ pub fn emit_destructor(structure: &Structure, group: &mut TokenStream) {
 
 pub fn emit_destructor_suffix(structure: &Structure, group: &mut TokenStream, suffix: &str) {
 	match structure {
-		Structure::Single {
-			name,
-			attributes: _attributes,
-			fields: _
-		} => {
+		Structure::Single { name, attributes: _attributes, fields: _ } => {
 			group.extend(std::iter::once(i(name)));
-		},
-		Structure::Parent {
-			parent,
-			name,
-			attributes: _,
-			fields: _
-		} => {
+		}
+		Structure::Parent { parent, name, attributes: _, fields: _ } => {
 			group.extend([
 				i(parent),
 				TokenTree::Punct(Punct::new(':', Spacing::Joint)),
@@ -84,7 +77,7 @@ pub fn emit_destructor_suffix(structure: &Structure, group: &mut TokenStream, su
 
 	match structure.fields() {
 		FieldsRef::Unit => {}
-		FieldsRef::Unnamed(ref fields) => {
+		FieldsRef::Unnamed(fields) => {
 			let mut inner = TokenStream::new();
 			for idx in 0..fields.len() {
 				if idx > 0 {
@@ -96,7 +89,7 @@ pub fn emit_destructor_suffix(structure: &Structure, group: &mut TokenStream, su
 			}
 			group.extend([TokenTree::Group(Group::new(Delimiter::Parenthesis, inner))]);
 		}
-		FieldsRef::Named(ref fields) => {
+		FieldsRef::Named(fields) => {
 			let mut inner = TokenStream::new();
 			for (idx, field) in fields.iter().enumerate() {
 				if idx > 0 {
@@ -120,7 +113,11 @@ pub fn emit_destructor_suffix(structure: &Structure, group: &mut TokenStream, su
 }
 
 /// TODO Structure::Variant
-pub fn enum_to_match(r#enum: &Enum, matcher: &str, mut cb: impl for<'a> FnMut(Structure<'a>) -> TokenStream) -> TokenStream {
+pub fn enum_to_match(
+	r#enum: &Enum,
+	matcher: &str,
+	mut cb: impl for<'a> FnMut(Structure<'a>) -> TokenStream,
+) -> TokenStream {
 	let mut group = TokenStream::new();
 	let mut seen = true;
 	for variant in &r#enum.variants {
@@ -138,7 +135,7 @@ pub fn enum_to_match(r#enum: &Enum, matcher: &str, mut cb: impl for<'a> FnMut(St
 			parent: &r#enum.name.name,
 			name: &variant.0.name.name,
 			fields: FieldsRef::from(&variant.0.fields),
-			attributes: (&r#enum.attributes, &variant.0.attributes)
+			attributes: (&r#enum.attributes, &variant.0.attributes),
 		};
 
 		emit_destructor(&structure, &mut group);
@@ -148,7 +145,7 @@ pub fn enum_to_match(r#enum: &Enum, matcher: &str, mut cb: impl for<'a> FnMut(St
 		group.extend([
 			TokenTree::Punct(Punct::new('=', Spacing::Joint)),
 			TokenTree::Punct(Punct::new('>', Spacing::Alone)),
-			body
+			body,
 		]);
 	}
 

@@ -16,11 +16,6 @@ edition = "2024"
 
 [dependencies]
 proc-macro2 = "1.0"
-quote.version = "1.0"
-quote.optional = true
-syn.version = "2.0"
-syn.features = ["full", "visit", "visit-mut"]
-syn.optional = true
 
 [workspace.lints.clippy]
 all = "deny"
@@ -28,6 +23,3 @@ pedantic = "deny"
 
 [features]
 emit-string = []
-syn = ["dep:syn"]
-quote = ["dep:quote"]
-syn-extra-traits = ["syn", "syn/extra-traits"]

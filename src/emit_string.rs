@@ -1,4 +1,4 @@
-use crate::{EitherField, FieldsRef, Fields, Enum};
+use crate::{EitherField, Enum, Fields, FieldsRef};
 
 pub fn enum_to_match<F: for<'a> FnMut(FieldsRef<'a>, &'a mut String)>(
 	r#enum: Enum,
